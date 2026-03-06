@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { useMissionControl, Conversation, Agent } from '@/store'
+import { useMissionControl, Conversation } from '@/store'
 import { useSmartPoll } from '@/lib/use-smart-poll'
 import { createClientLogger } from '@/lib/client-logger'
 import { Button } from '@/components/ui/button'
@@ -38,71 +38,56 @@ interface ConversationListProps {
   onNewConversation: (agentName: string) => void
 }
 
-export function ConversationList({ onNewConversation }: ConversationListProps) {
+export function ConversationList({ onNewConversation: _onNewConversation }: ConversationListProps) {
   const {
     conversations,
     setConversations,
     activeConversation,
     setActiveConversation,
-    agents,
     markConversationRead,
     dashboardMode,
   } = useMissionControl()
-  const [showNewChat, setShowNewChat] = useState(false)
   const [search, setSearch] = useState('')
+  const isGatewayMode = dashboardMode !== 'local'
 
   const loadConversations = useCallback(async () => {
     try {
-      const [chatRes, sessionsRes, prefsRes] = await Promise.all([
-        fetch('/api/chat/conversations'),
-        fetch('/api/sessions?include_local=1'),
-        fetch('/api/chat/session-prefs'),
-      ])
+      const sessionsUrl = dashboardMode === 'local'
+        ? '/api/sessions?include_local=1'
+        : '/api/sessions'
+      const requests: Promise<Response>[] = [fetch(sessionsUrl)]
+      if (dashboardMode === 'local') {
+        requests.push(fetch('/api/chat/session-prefs'))
+      }
 
-      const chatData = chatRes.ok ? await chatRes.json() : { conversations: [] }
+      const [sessionsRes, prefsRes] = await Promise.all(requests)
       const sessionsData = sessionsRes.ok ? await sessionsRes.json() : { sessions: [] }
       const prefsPayload = prefsRes?.ok ? await prefsRes.json().catch(() => ({ prefs: {} })) : { prefs: {} }
       const prefs = (prefsPayload?.prefs && typeof prefsPayload.prefs === 'object') ? prefsPayload.prefs : {}
 
-      const chatConversations = (chatData.conversations || []).map((c: any) => ({
-        id: c.conversation_id,
-        name: c.conversation_id.startsWith('agent_')
-          ? c.conversation_id.replace('agent_', '')
-          : c.conversation_id,
-        source: 'chat' as const,
-        participants: [],
-        lastMessage: c.last_message
-          ? {
-              id: c.last_message.id,
-              conversation_id: c.last_message.conversation_id,
-              from_agent: c.last_message.from_agent,
-              to_agent: c.last_message.to_agent,
-              content: c.last_message.content,
-              message_type: c.last_message.message_type,
-              metadata: c.last_message.metadata,
-              read_at: c.last_message.read_at,
-              created_at: c.last_message.created_at,
-            }
-          : undefined,
-        unreadCount: c.unread_count || 0,
-        updatedAt: Number(c.last_message_at || 0),
-      }))
-
-      // In local mode, surface local Claude/Codex sessions as read-only chat rows.
-      const localToolSessions = (sessionsData.sessions || [])
-        .filter((s: any) =>
-          s?.source === 'local' &&
-          (s?.kind === 'claude-code' || s?.kind === 'codex-cli')
-        )
+      const providerSessions = (sessionsData.sessions || [])
+        .filter((s: any) => {
+          if (dashboardMode === 'local') {
+            return s?.source === 'local' && (s?.kind === 'claude-code' || s?.kind === 'codex-cli')
+          }
+          return s?.source === 'gateway'
+        })
         .map((s: any, idx: number) => {
           const lastActivityMs = Number(s.lastActivity || s.startTime || 0)
           const updatedAt = lastActivityMs > 1_000_000_000_000
             ? Math.floor(lastActivityMs / 1000)
             : lastActivityMs
-          const kindLabel = s.kind === 'codex-cli' ? 'Codex' : 'Claude'
+          const kindLabel = s.kind === 'codex-cli'
+            ? 'Codex'
+            : s.kind === 'claude-code'
+              ? 'Claude'
+              : 'Gateway'
           const prefKey = `${s.kind}:${s.id}`
           const pref = prefs[prefKey] || {}
-          const sessionName = pref.name || `${kindLabel} • ${s.key || s.id}`
+          const sessionName = dashboardMode === 'local'
+            ? (pref.name || `${kindLabel} • ${s.key || s.id}`)
+            : `${s.agent || 'Gateway'} • ${s.key || s.id}`
+          const sessionKind = s.kind === 'claude-code' || s.kind === 'codex-cli' ? s.kind : 'gateway'
 
           return {
             id: `session:${s.kind}:${s.id}`,
@@ -110,11 +95,11 @@ export function ConversationList({ onNewConversation }: ConversationListProps) {
             kind: s.kind,
             source: 'session' as const,
             session: {
-              prefKey,
+              prefKey: dashboardMode === 'local' ? prefKey : undefined,
               sessionId: String(s.id),
-              sessionKind: s.kind,
+              sessionKind,
               displayName: sessionName,
-              colorTag: typeof pref.color === 'string' ? pref.color : undefined,
+              colorTag: dashboardMode === 'local' && typeof pref.color === 'string' ? pref.color : undefined,
               model: s.model,
               tokens: s.tokens,
               workingDir: s.workingDir || null,
@@ -137,12 +122,8 @@ export function ConversationList({ onNewConversation }: ConversationListProps) {
           }
         })
 
-      const mergedConversations = dashboardMode === 'local'
-        ? [...chatConversations, ...localToolSessions]
-        : chatConversations
-
       setConversations(
-        mergedConversations.sort((a: Conversation, b: Conversation) => b.updatedAt - a.updatedAt)
+        providerSessions.sort((a: Conversation, b: Conversation) => b.updatedAt - a.updatedAt)
       )
     } catch (err) {
       log.error('Failed to load conversations:', err)
@@ -167,15 +148,13 @@ export function ConversationList({ onNewConversation }: ConversationListProps) {
     )
   })
 
-  const chatRows = filteredConversations.filter((c) => c.source !== 'session')
+  const gatewayRows = filteredConversations.filter((c) => c.source === 'session' && c.session?.sessionKind === 'gateway')
   const claudeRows = filteredConversations.filter((c) => c.source === 'session' && c.session?.sessionKind === 'claude-code')
   const codexRows = filteredConversations.filter((c) => c.source === 'session' && c.session?.sessionKind === 'codex-cli')
 
   function renderConversationItem(conv: Conversation) {
     const displayName = conv.name || conv.id.replace('agent_', '')
     const isSessionRow = conv.id.startsWith('session:')
-    const agentName = conv.id.replace('agent_', '')
-    const agent = agents.find(a => a.name.toLowerCase() === agentName.toLowerCase())
     const isActive = activeConversation === conv.id
 
     return (
@@ -195,8 +174,8 @@ export function ConversationList({ onNewConversation }: ConversationListProps) {
             <div className="w-7 h-7 rounded-full bg-surface-2 flex items-center justify-center text-[10px] font-bold text-muted-foreground">
               {displayName.charAt(0).toUpperCase()}
             </div>
-            {agent && !isSessionRow && (
-              <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-card ${STATUS_COLORS[agent.status] || STATUS_COLORS.offline}`} />
+            {!isSessionRow && (
+              <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-card ${STATUS_COLORS.offline}`} />
             )}
           </div>
 
@@ -238,19 +217,8 @@ export function ConversationList({ onNewConversation }: ConversationListProps) {
     <div className="flex flex-col h-full bg-card">
       {/* Header */}
       <div className="p-3 border-b border-border flex-shrink-0">
-        <div className="flex items-center justify-between mb-2">
-          <h3 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Chats</h3>
-          <Button
-            onClick={() => setShowNewChat(!showNewChat)}
-            variant="ghost"
-            size="icon-xs"
-            className="w-6 h-6"
-            title="New conversation"
-          >
-            <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-              <path d="M8 3v10M3 8h10" />
-            </svg>
-          </Button>
+        <div className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+      {isGatewayMode ? 'Gateway Sessions' : 'Sessions'}
         </div>
         <div className="relative">
           <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground/50">
@@ -267,32 +235,6 @@ export function ConversationList({ onNewConversation }: ConversationListProps) {
         </div>
       </div>
 
-      {/* New chat agent picker */}
-      {showNewChat && (
-        <div className="border-b border-border p-2 bg-surface-1 max-h-48 overflow-y-auto flex-shrink-0 fade-in">
-          <div className="text-[10px] text-muted-foreground/60 uppercase tracking-wider mb-1 px-1">Chat with agent</div>
-          {agents.map((agent) => (
-            <Button
-              key={agent.id}
-              onClick={() => {
-                onNewConversation(agent.name)
-                setShowNewChat(false)
-              }}
-              variant="ghost"
-              size="xs"
-              className="w-full justify-start px-2 py-1.5 h-auto gap-2"
-            >
-              <div className={`w-1.5 h-1.5 rounded-full ${STATUS_COLORS[agent.status] || STATUS_COLORS.offline}`} />
-              <span className="font-medium text-foreground">{agent.name}</span>
-              <span className="text-muted-foreground/50 text-[10px] ml-auto truncate max-w-[60px]">{agent.role}</span>
-            </Button>
-          ))}
-          {agents.length === 0 && (
-            <div className="text-xs text-muted-foreground/50 px-1 py-2">No agents registered</div>
-          )}
-        </div>
-      )}
-
       {/* Conversation list */}
       <div className="flex-1 overflow-y-auto">
         {filteredConversations.length === 0 ? (
@@ -301,14 +243,6 @@ export function ConversationList({ onNewConversation }: ConversationListProps) {
           </div>
         ) : (
           <>
-            {chatRows.length > 0 && (
-              <div>
-                <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-muted-foreground/60">
-                  Chats
-                </div>
-                {chatRows.map(renderConversationItem)}
-              </div>
-            )}
             {dashboardMode === 'local' && claudeRows.length > 0 && (
               <div>
                 <div className="px-3 pt-2 py-1 text-[10px] uppercase tracking-wider text-muted-foreground/60">
@@ -323,6 +257,14 @@ export function ConversationList({ onNewConversation }: ConversationListProps) {
                   Codex Sessions
                 </div>
                 {codexRows.map(renderConversationItem)}
+              </div>
+            )}
+            {isGatewayMode && gatewayRows.length > 0 && (
+              <div>
+                <div className="px-3 py-1 text-[10px] uppercase tracking-wider text-muted-foreground/60">
+                  Gateway Sessions
+                </div>
+                {gatewayRows.map(renderConversationItem)}
               </div>
             )}
           </>

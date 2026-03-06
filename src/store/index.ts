@@ -216,7 +216,7 @@ export interface Conversation {
   session?: {
     prefKey?: string
     sessionId: string
-    sessionKind: 'claude-code' | 'codex-cli'
+    sessionKind: 'claude-code' | 'codex-cli' | 'gateway'
     displayName?: string
     colorTag?: string
     model?: string

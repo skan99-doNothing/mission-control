@@ -82,6 +82,10 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
   // Load messages when conversation changes
   const loadMessages = useCallback(async () => {
     if (!activeConversation) return
+    if (activeConversation.startsWith('session:')) {
+      setChatMessages([])
+      return
+    }
 
     try {
       const res = await fetch(`/api/chat/messages?conversation_id=${encodeURIComponent(activeConversation)}&limit=100`)
@@ -99,7 +103,7 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
 
   // Poll for new messages (visibility-aware)
   useSmartPoll(loadMessages, 15000, {
-    enabled: !!activeConversation,
+    enabled: !!activeConversation && !activeConversation.startsWith('session:'),
     pauseWhenSseConnected: true,
   })
 
@@ -192,6 +196,12 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
     const sessionMeta = selectedSession
     if (!sessionMeta) {
       setSessionTranscript([])
+      setSessionTranscriptError(null)
+      return
+    }
+    if (sessionMeta.sessionKind === 'gateway') {
+      setSessionTranscript([])
+      setSessionTranscriptLoading(false)
       setSessionTranscriptError(null)
       return
     }
@@ -397,6 +407,7 @@ function SessionConversationView({
   onRefreshTranscript: () => void
   onSavePreferences: (payload: { prefKey: string; displayName?: string; colorTag?: string }) => Promise<void>
 }) {
+  const isGatewaySession = session.sessionKind === 'gateway'
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null)
   const [continuePrompt, setContinuePrompt] = useState('')
   const [continueBusy, setContinueBusy] = useState(false)
@@ -493,6 +504,7 @@ function SessionConversationView({
         </div>
       </div>
 
+      {!isGatewaySession && (
       <div className="border-b border-border/50 px-4 py-3">
         <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">Session settings</div>
         <div className="grid gap-2 sm:grid-cols-[1fr_120px_auto]">
@@ -530,6 +542,7 @@ function SessionConversationView({
         </div>
         {prefError && <div className="mt-2 text-xs text-red-400">{prefError}</div>}
       </div>
+      )}
 
       <div ref={transcriptScrollRef} className="flex-1 overflow-y-auto px-4 py-3">
         {loading && (
@@ -544,7 +557,9 @@ function SessionConversationView({
           <div className="text-xs text-red-400">{error}</div>
         )}
         {!loading && !error && messages.length === 0 && (
-          <div className="text-xs text-muted-foreground">No transcript snippets found for this session.</div>
+          <div className="text-xs text-muted-foreground">
+            {isGatewaySession ? 'Gateway session selected. Transcript is provided by the gateway runtime.' : 'No transcript snippets found for this session.'}
+          </div>
         )}
         {!loading && !error && messages.length > 0 && (
           <div className="space-y-2">
@@ -561,6 +576,7 @@ function SessionConversationView({
         )}
       </div>
 
+      {!isGatewaySession && (
       <div className="border-t border-border/50 px-4 py-3">
         <div className="mb-2 text-[10px] uppercase tracking-wider text-muted-foreground">Continue session</div>
         <div className="flex gap-2">
@@ -587,6 +603,7 @@ function SessionConversationView({
           </div>
         )}
       </div>
+      )}
     </div>
   )
 }
@@ -613,7 +630,11 @@ function AgentAvatar({ name, size = 'md' }: { name: string; size?: 'sm' | 'md' }
 }
 
 function getConversationStatus(agents: Array<{ name: string; status: string }>, conversationId: string): string {
-  if (conversationId.startsWith('session:')) return 'Local session'
+  if (conversationId.startsWith('session:')) {
+    if (conversationId.includes('claude-code')) return 'Local Claude session'
+    if (conversationId.includes('codex-cli')) return 'Local Codex session'
+    return 'Gateway session'
+  }
   const name = conversationId.replace('agent_', '')
   const agent = agents.find(a => a.name.toLowerCase() === name.toLowerCase())
   if (!agent) return 'Unknown'
