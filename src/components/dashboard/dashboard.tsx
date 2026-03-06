@@ -107,6 +107,8 @@ export function Dashboard() {
   const errorCount = logs.filter(l => l.level === 'error').length
   const runningTasks = dbStats?.tasks.byStatus?.in_progress ?? tasks.filter(t => t.status === 'in_progress').length
   const onlineAgents = dbStats ? (dbStats.agents.total - (dbStats.agents.byStatus?.offline ?? 0)) : agents.filter(a => a.status !== 'offline').length
+  const claudeLocalSessions = sessions.filter((s) => s.kind === 'claude-code')
+  const codexLocalSessions = sessions.filter((s) => s.kind === 'codex-cli')
 
   if (isLoading) {
     return (
@@ -128,6 +130,17 @@ export function Dashboard() {
   const memPct = systemStats?.memory?.total
     ? Math.round((systemStats.memory.used / systemStats.memory.total) * 100)
     : null
+  const diskPct = parseInt(systemStats?.disk?.usage || '', 10)
+  const localOsStatus = getLocalOsStatus(memPct, Number.isFinite(diskPct) ? diskPct : null)
+  const claudeHealth = getProviderHealth(
+    claudeStats?.active_sessions ?? claudeLocalSessions.filter((s) => s.active).length,
+    claudeStats?.total_sessions ?? claudeLocalSessions.length,
+  )
+  const codexHealth = getProviderHealth(
+    codexLocalSessions.filter((s) => s.active).length,
+    codexLocalSessions.length,
+  )
+  const mcHealth = getMcHealth(systemStats, dbStats, errorCount)
 
   return (
     <div className="p-5 space-y-5">
@@ -231,7 +244,12 @@ export function Dashboard() {
           </div>
           <div className="panel-body space-y-3">
             {isLocal ? (
-              <HealthRow label="Mode" value="Local" status="good" />
+              <>
+                <HealthRow label="Local OS" value={localOsStatus.value} status={localOsStatus.status} />
+                <HealthRow label="Claude" value={claudeHealth.value} status={claudeHealth.status} />
+                <HealthRow label="Codex" value={codexHealth.value} status={codexHealth.status} />
+                <HealthRow label="MC" value={mcHealth.value} status={mcHealth.status} />
+              </>
             ) : (
               <HealthRow
                 label="Gateway"
@@ -671,6 +689,30 @@ function formatBytes(bytes: number): string {
   const sizes = ['B', 'KB', 'MB', 'GB']
   const i = Math.floor(Math.log(bytes) / Math.log(k))
   return `${parseFloat((bytes / Math.pow(k, i)).toFixed(1))} ${sizes[i]}`
+}
+
+function getProviderHealth(active: number, total: number): { value: string; status: 'good' | 'warn' | 'bad' } {
+  if (total === 0) return { value: 'No sessions', status: 'warn' }
+  if (active > 0) return { value: `${active} active`, status: 'good' }
+  return { value: `Idle (${total})`, status: 'warn' }
+}
+
+function getLocalOsStatus(memPct: number | null, diskPct: number | null): { value: string; status: 'good' | 'warn' | 'bad' } {
+  if (memPct == null && diskPct == null) return { value: 'Unknown', status: 'bad' }
+  const maxPct = Math.max(memPct ?? 0, diskPct ?? 0)
+  if (maxPct >= 95) return { value: 'Critical', status: 'bad' }
+  if (maxPct >= 80) return { value: 'Degraded', status: 'warn' }
+  return { value: 'Healthy', status: 'good' }
+}
+
+function getMcHealth(
+  systemStats: any,
+  dbStats: DbStats | null,
+  errorCount: number,
+): { value: string; status: 'good' | 'warn' | 'bad' } {
+  if (!systemStats || !dbStats) return { value: 'Unavailable', status: 'bad' }
+  if (errorCount > 0) return { value: `${errorCount} errors`, status: 'warn' }
+  return { value: 'Healthy', status: 'good' }
 }
 
 function langColor(lang: string): string {
