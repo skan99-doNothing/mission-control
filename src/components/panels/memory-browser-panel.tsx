@@ -346,7 +346,7 @@ export function MemoryBrowserPanel() {
   }
 
   return (
-    <div className="h-[calc(100vh-3.5rem)] flex flex-col">
+    <div className="h-[calc(100vh-3.5rem)] flex flex-col overflow-hidden">
       {/* Top bar — Obsidian-style minimal header */}
       <div className="flex items-center gap-1 px-3 py-2 border-b border-border bg-[hsl(var(--surface-0))]">
         {/* Sidebar toggle */}
