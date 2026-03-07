@@ -80,6 +80,29 @@ const statusIcons: Record<string, string> = {
   error: '!',
 }
 
+const statusCardStyles: Record<Agent['status'], { edge: string; glow: string; dot: string }> = {
+  offline: {
+    edge: 'from-slate-400/60 to-slate-600/30',
+    glow: 'from-slate-500/10 via-transparent to-transparent',
+    dot: 'bg-slate-400',
+  },
+  idle: {
+    edge: 'from-emerald-300/80 to-emerald-600/30',
+    glow: 'from-emerald-400/15 via-transparent to-transparent',
+    dot: 'bg-emerald-300',
+  },
+  busy: {
+    edge: 'from-amber-300/80 to-amber-600/30',
+    glow: 'from-amber-400/15 via-transparent to-transparent',
+    dot: 'bg-amber-300',
+  },
+  error: {
+    edge: 'from-rose-300/80 to-rose-600/30',
+    glow: 'from-rose-400/15 via-transparent to-transparent',
+    dot: 'bg-rose-300',
+  },
+}
+
 export function AgentSquadPanelPhase3() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [loading, setLoading] = useState(true)
@@ -376,11 +399,12 @@ export function AgentSquadPanelPhase3() {
             {agents.map(agent => (
               <div
                 key={agent.id}
-                className={`bg-card rounded-lg p-4 border-l-4 hover:bg-surface-1 transition-smooth cursor-pointer ${
-                  hasRecentHeartbeat(agent) ? 'border-cyan-400' : 'border-border'
-                }`}
+                className="group relative overflow-hidden rounded-xl border border-border/70 bg-gradient-to-br from-card via-card/95 to-surface-2/40 p-4 shadow-[0_6px_24px_hsl(var(--background)/0.55)] transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-border hover:shadow-[0_14px_34px_hsl(var(--background)/0.7)] cursor-pointer"
                 onClick={() => setSelectedAgent(agent)}
               >
+                <div className={`pointer-events-none absolute inset-y-0 left-0 w-1 bg-gradient-to-b ${statusCardStyles[agent.status].edge}`} />
+                <div className={`pointer-events-none absolute -inset-x-16 -top-10 h-20 bg-gradient-to-b ${statusCardStyles[agent.status].glow} opacity-80 blur-xl`} />
+
                 {/* Agent Header */}
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center gap-2 min-w-0">
@@ -407,24 +431,28 @@ export function AgentSquadPanelPhase3() {
                   <div className="flex items-center gap-2">
                     {/* Heartbeat indicator */}
                     {hasRecentHeartbeat(agent) && (
-                      <div className="w-3 h-3 rounded-full bg-cyan-400 animate-pulse" title="Recent heartbeat"></div>
+                      <div className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" title="Recent heartbeat"></div>
                     )}
-                    <div className={`w-3 h-3 rounded-full ${statusColors[agent.status]} animate-pulse`}></div>
-                    <span className="text-xs text-muted-foreground">{agent.status}</span>
+                    <span className={`inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-xs capitalize ${statusBadgeStyles[agent.status]}`}>
+                      <span className={`h-1.5 w-1.5 rounded-full ${statusCardStyles[agent.status].dot}`} />
+                      {agent.status}
+                    </span>
                   </div>
                 </div>
 
                 {/* Session Info */}
-                <div className="text-xs text-muted-foreground mb-2">
-                  <div className="flex items-center justify-between">
-                    <span>
-                      <span className="font-medium">Session:</span> {agent.session_key || 'Not set'}
+                <div className="mb-3 rounded-lg border border-border/50 bg-surface-1/35 px-2.5 py-2 text-xs text-muted-foreground/95">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="truncate">
+                      <span className="font-medium text-muted-foreground">Session:</span> {agent.session_key || 'Not set'}
                     </span>
-                    {agent.session_key && (
-                      <div className="flex items-center gap-1">
-                        <div className="w-2 h-2 rounded-full bg-green-400"></div>
-                        <span>Active</span>
-                      </div>
+                    {agent.session_key ? (
+                      <span className="inline-flex items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-300">
+                        <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
+                        Active
+                      </span>
+                    ) : (
+                      <span className="text-[10px] text-muted-foreground/70">No session</span>
                     )}
                   </div>
                 </div>
@@ -432,31 +460,31 @@ export function AgentSquadPanelPhase3() {
                 {/* Task Stats */}
                 {agent.taskStats && (
                   <div className="grid grid-cols-2 gap-2 mb-3">
-                    <div className="bg-surface-1/50 rounded p-2 text-center">
+                    <div className="rounded-lg border border-border/45 bg-surface-1/45 p-2.5 text-center">
                       <div className="text-lg font-semibold text-foreground">{agent.taskStats.total}</div>
                       <div className="text-xs text-muted-foreground">Total Tasks</div>
                     </div>
-                    <div className="bg-surface-1/50 rounded p-2 text-center">
-                      <div className="text-lg font-semibold text-yellow-400">{agent.taskStats.in_progress}</div>
+                    <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-2.5 text-center">
+                      <div className="text-lg font-semibold text-amber-300">{agent.taskStats.in_progress}</div>
                       <div className="text-xs text-muted-foreground">In Progress</div>
                     </div>
                   </div>
                 )}
 
                 {/* Last Activity */}
-                <div className="text-xs text-muted-foreground mb-3">
+                <div className="mb-3 rounded-lg border border-border/40 bg-surface-1/25 px-2.5 py-2 text-xs text-muted-foreground">
                   <div>
-                    <span className="font-medium">Last seen:</span> {formatLastSeen(agent.last_seen)}
+                    <span className="font-medium text-muted-foreground/90">Last seen:</span> {formatLastSeen(agent.last_seen)}
                   </div>
                   {agent.last_activity && (
                     <div className="mt-1 truncate" title={agent.last_activity}>
-                      <span className="font-medium">Activity:</span> {agent.last_activity}
+                      <span className="font-medium text-muted-foreground/90">Activity:</span> {agent.last_activity}
                     </div>
                   )}
                 </div>
 
                 {/* Quick Actions */}
-                <div className="flex gap-1">
+                <div className="flex gap-1.5">
                   {agent.session_key ? (
                     <Button
                       onClick={(e) => {
@@ -464,7 +492,7 @@ export function AgentSquadPanelPhase3() {
                         wakeAgent(agent.name, agent.session_key!)
                       }}
                       size="xs"
-                      className="flex-1 bg-cyan-500/20 text-cyan-400 border border-cyan-500/30 hover:bg-cyan-500/30"
+                      className="flex-1 rounded-md border border-cyan-500/30 bg-cyan-500/15 text-cyan-300 hover:bg-cyan-500/25 hover:text-cyan-200"
                       title="Wake agent via session"
                     >
                       Wake Agent
@@ -478,7 +506,7 @@ export function AgentSquadPanelPhase3() {
                       disabled={agent.status === 'idle'}
                       variant="success"
                       size="xs"
-                      className="flex-1"
+                      className="flex-1 rounded-md"
                     >
                       Wake
                     </Button>
@@ -490,7 +518,7 @@ export function AgentSquadPanelPhase3() {
                     }}
                     disabled={agent.status === 'busy'}
                     size="xs"
-                    className="flex-1 bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 hover:bg-yellow-500/30"
+                    className="flex-1 rounded-md border border-amber-500/30 bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 hover:text-amber-200"
                   >
                     Busy
                   </Button>
@@ -501,7 +529,7 @@ export function AgentSquadPanelPhase3() {
                       setShowQuickSpawnModal(true)
                     }}
                     size="xs"
-                    className="flex-1 bg-blue-500/20 text-blue-400 border border-blue-500/30 hover:bg-blue-500/30"
+                    className="flex-1 rounded-md border border-blue-500/30 bg-blue-500/15 text-blue-300 hover:bg-blue-500/25 hover:text-blue-200"
                   >
                     Spawn
                   </Button>
