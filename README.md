@@ -28,7 +28,9 @@ Running AI agents at scale means juggling sessions, tasks, costs, and reliabilit
 - **Real-time everything** — WebSocket + SSE push updates, smart polling that pauses when you're away
 - **Zero external dependencies** — SQLite database, single `pnpm start` to run, no Redis/Postgres/Docker required
 - **Role-based access** — Viewer, operator, and admin roles with session + API key auth
-- **Quality gates** — Built-in review system that blocks task completion without sign-off
+- **Quality gates** — Built-in Aegis review system that blocks task completion without sign-off
+- **Recurring tasks** — Natural language scheduling ("every morning at 9am") with cron-based template spawning
+- **Claude Code bridge** — Read-only integration surfaces Claude Code team tasks and configs on the dashboard
 - **Skills Hub** — Browse, install, and security-scan agent skills from ClawdHub and skills.sh registries
 - **Multi-gateway** — Connect to multiple agent gateways simultaneously (OpenClaw, and more coming soon)
 
@@ -69,6 +71,8 @@ If `AUTH_PASS` contains `#`, quote it (e.g. `AUTH_PASS="my#password"`) or use `A
 - Skills Hub with ClawdHub and skills.sh registry integration (search, install, security scan)
 - Bidirectional skill sync — disk ↔ DB with SHA-256 change detection
 - Local agent discovery from `~/.agents/`, `~/.codex/agents/`, `~/.claude/agents/`
+- Natural language recurring tasks — schedule parser converts "every 2 hours" to cron, spawns dated child tasks
+- Claude Code task bridge — read-only scanner surfaces team tasks and configs from `~/.claude/tasks/` and `~/.claude/teams/`
 - Skill security scanner (prompt injection, credential leaks, data exfiltration, obfuscated content)
 - Update available banner with GitHub release check and one-click self-update
 - Framework adapter layer for multi-agent registration (OpenClaw, CrewAI, LangGraph, AutoGen, Claude SDK, generic)
@@ -102,13 +106,19 @@ Live activity feed, session inspector, and log viewer with filtering. WebSocket 
 Token usage dashboard with per-model breakdowns, trend charts, and cost analysis powered by Recharts.
 
 ### Background Automation
-Scheduled tasks for database backups, stale record cleanup, and agent heartbeat monitoring. Configurable via UI or API.
+Scheduled tasks for database backups, stale record cleanup, agent heartbeat monitoring, and recurring task spawning. Configurable via UI or API.
+
+### Natural Language Recurring Tasks
+Create recurring tasks with natural language like "every morning at 9am" or "every 2 hours". The built-in schedule parser (zero dependencies) converts expressions to cron and stores them in task metadata. A template-clone pattern keeps the original task as a template and spawns dated child tasks (e.g., "Daily Report - Mar 07") on schedule. Each spawned task gets its own Aegis quality gate.
 
 ### Direct CLI Integration
 Connect Claude Code, Codex, or any CLI tool directly to Mission Control without requiring a gateway. Register connections, send heartbeats with inline token reporting, and auto-register agents.
 
 ### Claude Code Session Tracking
 Automatically discovers and tracks local Claude Code sessions by scanning `~/.claude/projects/`. Extracts token usage, model info, message counts, cost estimates, and active status from JSONL transcripts. Scans every 60 seconds via the background scheduler.
+
+### Claude Code Task Bridge
+Read-only integration that surfaces Claude Code team tasks and team configs on the Mission Control dashboard. Scans `~/.claude/tasks/<team>/<N>.json` for structured task data (subject, status, owner, blockers) and `~/.claude/teams/<name>/config.json` for team metadata (members, lead agent, model assignments). Visible in both the Task Board (collapsible section) and Cron Management (teams overview) panels.
 
 ### GitHub Issues Sync
 Inbound sync from GitHub repositories with label and assignee mapping. Synced issues appear on the task board alongside agent-created tasks.
@@ -161,7 +171,10 @@ mission-control/
 │   │   ├── auth.ts            # Session + API key auth, RBAC
 │   │   ├── db.ts              # SQLite (better-sqlite3, WAL mode)
 │   │   ├── claude-sessions.ts  # Local Claude Code session scanner
-│   │   ├── migrations.ts      # 34 schema migrations
+│   │   ├── claude-tasks.ts     # Claude Code team task/config scanner
+│   │   ├── schedule-parser.ts  # Natural language → cron expression parser
+│   │   ├── recurring-tasks.ts  # Recurring task template spawner
+│   │   ├── migrations.ts      # 36 schema migrations
 │   │   ├── scheduler.ts       # Background task scheduler
 │   │   ├── webhooks.ts        # Outbound webhook delivery
 │   │   ├── websocket.ts       # Gateway WebSocket client
@@ -392,6 +405,8 @@ All endpoints require authentication unless noted. Full reference below.
 |--------|------|------|-------------|
 | `GET` | `/api/claude/sessions` | viewer | List discovered sessions (filter: `?active=1`, `?project=`) |
 | `POST` | `/api/claude/sessions` | operator | Trigger manual session scan |
+| `GET` | `/api/claude-tasks` | viewer | List Claude Code team tasks and configs (`?force=true` to bypass cache) |
+| `GET` | `/api/schedule-parse` | viewer | Parse natural language schedule (`?input=every+2+hours`) |
 
 </details>
 
@@ -573,6 +588,8 @@ See [open issues](https://github.com/builderz-labs/mission-control/issues) for p
 - [x] Skills Hub — browse, install, and security-scan skills from ClawdHub and skills.sh registries
 - [x] Bidirectional skill sync — disk ↔ DB with SHA-256 change detection (60s scheduler)
 - [x] Local agent discovery — auto-detect agents from `~/.agents/`, `~/.codex/agents/`, `~/.claude/agents/`
+- [x] Natural language recurring tasks with cron-based template spawning
+- [x] Claude Code task bridge — read-only team task and config integration
 - [ ] Agent-agnostic gateway support — connect any orchestration framework (OpenClaw, ZeroClaw, OpenFang, NeoBot, IronClaw, etc.), not just OpenClaw
 - [ ] **[Flight Deck](https://github.com/splitlabs/flight-deck)** — native desktop companion app (Tauri v2) with real PTY terminal grid, stall inbox with native OS notifications, and system tray HUD. Currently in private beta.
 - [ ] First-class per-agent cost breakdowns — dedicated panel with per-agent token usage and spend (currently derivable from per-session data)
