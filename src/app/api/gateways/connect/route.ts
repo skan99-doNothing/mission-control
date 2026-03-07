@@ -48,11 +48,15 @@ function detectTailscaleServe(): boolean {
   }
 }
 
-/** Cache Tailscale Serve detection (config rarely changes at runtime). */
-let _tailscaleServeCache: boolean | null = null
+/** Cache Tailscale Serve detection with 60-second TTL. */
+let _tailscaleServeCache: { value: boolean; expiresAt: number } | null = null
+const TAILSCALE_CACHE_TTL_MS = 60_000
 function isTailscaleServe(): boolean {
-  if (_tailscaleServeCache === null) _tailscaleServeCache = detectTailscaleServe()
-  return _tailscaleServeCache
+  const now = Date.now()
+  if (!_tailscaleServeCache || now > _tailscaleServeCache.expiresAt) {
+    _tailscaleServeCache = { value: detectTailscaleServe(), expiresAt: now + TAILSCALE_CACHE_TTL_MS }
+  }
+  return _tailscaleServeCache.value
 }
 
 /** Extract the browser-facing hostname from the request. */

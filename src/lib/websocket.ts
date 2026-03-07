@@ -149,6 +149,13 @@ export function useWebSocket() {
 
       pingCounterRef.current += 1
       const pingId = `ping-${pingCounterRef.current}`
+
+      // Cap map size to prevent unbounded growth if pongs are never received
+      if (pingSentTimestamps.current.size >= 10) {
+        const oldest = pingSentTimestamps.current.keys().next().value
+        if (oldest !== undefined) pingSentTimestamps.current.delete(oldest)
+      }
+
       pingSentTimestamps.current.set(pingId, Date.now())
       missedPongsRef.current += 1
 

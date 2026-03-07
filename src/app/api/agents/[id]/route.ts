@@ -103,20 +103,9 @@ export async function PUT(
       return writeBack
     }
 
-    // Unified save: gateway first, then DB. If DB fails after gateway write, attempt rollback.
-    if (shouldWriteToGateway) {
-      try {
-        await writeAgentToConfig(getWriteBackPayload(gateway_config))
-      } catch (err: any) {
-        return NextResponse.json(
-          { error: `Save failed: unable to update gateway config: ${err.message}` },
-          { status: 502 }
-        )
-      }
-    }
-
+    // Unified save: DB first (transactional, easy to revert), then gateway file.
+    // If gateway write fails after DB succeeds, revert DB to keep consistency.
     try {
-      // Build update
       const fields: string[] = ['updated_at = ?']
       const values: any[] = [now]
 
@@ -133,19 +122,31 @@ export async function PUT(
       values.push(agent.id, workspaceId)
       db.prepare(`UPDATE agents SET ${fields.join(', ')} WHERE id = ? AND workspace_id = ?`).run(...values)
     } catch (err: any) {
-      if (shouldWriteToGateway) {
-        try {
-          // Best-effort rollback to preserve consistency if DB update fails after gateway write.
-          await writeAgentToConfig(getWriteBackPayload(existingConfig))
-        } catch (rollbackErr: any) {
-          logger.error({ err: rollbackErr, agent: agent.name }, 'Failed to rollback gateway config after DB failure')
-          return NextResponse.json(
-            { error: `Save failed after gateway update and rollback failed: ${err.message}` },
-            { status: 500 }
-          )
-        }
-      }
       return NextResponse.json({ error: `Save failed: ${err.message}` }, { status: 500 })
+    }
+
+    if (shouldWriteToGateway) {
+      try {
+        await writeAgentToConfig(getWriteBackPayload(gateway_config))
+      } catch (err: any) {
+        // Gateway write failed — revert DB to previous state
+        try {
+          const revertFields: string[] = ['updated_at = ?']
+          const revertValues: any[] = [agent.updated_at]
+          revertFields.push('role = ?')
+          revertValues.push(agent.role)
+          revertFields.push('config = ?')
+          revertValues.push(agent.config || '{}')
+          revertValues.push(agent.id, workspaceId)
+          db.prepare(`UPDATE agents SET ${revertFields.join(', ')} WHERE id = ? AND workspace_id = ?`).run(...revertValues)
+        } catch (revertErr: any) {
+          logger.error({ err: revertErr, agent: agent.name }, 'Failed to revert DB after gateway write failure')
+        }
+        return NextResponse.json(
+          { error: `Save failed: unable to update gateway config: ${err.message}` },
+          { status: 502 }
+        )
+      }
     }
 
     if (shouldWriteToGateway) {

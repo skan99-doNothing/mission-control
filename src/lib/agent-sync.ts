@@ -9,7 +9,7 @@ import { config } from './config'
 import { getDatabase, db_helpers, logAuditEvent } from './db'
 import { eventBus } from './event-bus'
 import { join, isAbsolute, resolve } from 'path'
-import { existsSync, readFileSync } from 'fs'
+import { existsSync, readFileSync, statSync } from 'fs'
 import { resolveWithin } from './paths'
 import { logger } from './logger'
 
@@ -138,6 +138,8 @@ function resolveAgentWorkspacePath(workspace: string): string {
   return resolveWithin(config.openclawStateDir, workspace)
 }
 
+const MAX_WORKSPACE_FILE_BYTES = 1024 * 1024 // 1 MB
+
 /** Safely read a file from an agent's workspace directory */
 function readWorkspaceFile(workspace: string | undefined, filename: string): string | null {
   if (!workspace) return null
@@ -145,6 +147,11 @@ function readWorkspaceFile(workspace: string | undefined, filename: string): str
     const safeWorkspace = resolveAgentWorkspacePath(workspace)
     const safePath = resolveWithin(safeWorkspace, filename)
     if (existsSync(safePath)) {
+      const size = statSync(safePath).size
+      if (size > MAX_WORKSPACE_FILE_BYTES) {
+        logger.warn({ workspace, filename, size }, `Workspace file exceeds ${MAX_WORKSPACE_FILE_BYTES} byte limit, skipping`)
+        return null
+      }
       return readFileSync(safePath, 'utf-8')
     }
   } catch (err) {
