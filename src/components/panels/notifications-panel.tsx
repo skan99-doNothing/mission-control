@@ -52,21 +52,31 @@ export function NotificationsPanel() {
 
   const markAllRead = async () => {
     if (!recipient) return
-    await fetch('/api/notifications', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ recipient, markAllRead: true })
-    })
-    fetchNotifications()
+    try {
+      const res = await fetch('/api/notifications', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recipient, markAllRead: true })
+      })
+      if (!res.ok) throw new Error('Failed to mark all as read')
+      fetchNotifications()
+    } catch {
+      // Silent — notification state will resync on next poll
+    }
   }
 
   const markRead = async (id: number) => {
-    await fetch('/api/notifications', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ids: [id] })
-    })
-    fetchNotifications()
+    try {
+      const res = await fetch('/api/notifications', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: [id] })
+      })
+      if (!res.ok) throw new Error('Failed to mark as read')
+      fetchNotifications()
+    } catch {
+      // Silent — notification state will resync on next poll
+    }
   }
 
   return (

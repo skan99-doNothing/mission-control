@@ -36,11 +36,12 @@ export function Sidebar() {
   const [systemStats, setSystemStats] = useState<any>(null)
 
   useEffect(() => {
-    // Fetch system status
+    let cancelled = false
     fetch('/api/status?action=overview')
       .then(res => res.json())
-      .then(data => setSystemStats(data))
+      .then(data => { if (!cancelled) setSystemStats(data) })
       .catch(err => log.error('Failed to fetch system status:', err))
+    return () => { cancelled = true }
   }, [])
 
   const activeSessions = sessions.filter(s => s.active).length

@@ -596,7 +596,7 @@ export const useMissionControl = create<MissionControlStore>()(
     spawnRequests: [],
     addSpawnRequest: (request) =>
       set((state) => ({
-        spawnRequests: [request, ...state.spawnRequests],
+        spawnRequests: [request, ...state.spawnRequests].slice(0, 500),
       })),
     updateSpawnRequest: (id, updates) =>
       set((state) => ({
@@ -627,7 +627,7 @@ export const useMissionControl = create<MissionControlStore>()(
     tokenUsage: [],
     addTokenUsage: (usage) =>
       set((state) => ({
-        tokenUsage: [...state.tokenUsage, usage],
+        tokenUsage: [...state.tokenUsage, usage].slice(-2000),
       })),
     getUsageByModel: (timeframe) => {
       const { tokenUsage } = get()
@@ -880,7 +880,7 @@ export const useMissionControl = create<MissionControlStore>()(
       }),
     addNotification: (notification) =>
       set((state) => ({
-        notifications: [notification, ...state.notifications],
+        notifications: [notification, ...state.notifications].slice(0, 500),
         unreadNotificationCount: state.unreadNotificationCount + 1
       })),
     markNotificationRead: (notificationId) =>

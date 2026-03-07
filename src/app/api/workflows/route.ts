@@ -125,6 +125,9 @@ export async function PUT(request: NextRequest) {
   const auth = requireRole(request, 'operator')
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
 
+  const rateCheck = mutationLimiter(request)
+  if (rateCheck) return rateCheck
+
   try {
     const db = getDatabase()
     const workspaceId = auth.user.workspace_id ?? 1
@@ -182,6 +185,9 @@ export async function PUT(request: NextRequest) {
 export async function DELETE(request: NextRequest) {
   const auth = requireRole(request, 'operator')
   if ('error' in auth) return NextResponse.json({ error: auth.error }, { status: auth.status })
+
+  const rateCheck = mutationLimiter(request)
+  if (rateCheck) return rateCheck
 
   try {
     const db = getDatabase()
