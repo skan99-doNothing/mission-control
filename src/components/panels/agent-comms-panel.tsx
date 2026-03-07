@@ -497,6 +497,7 @@ function ChatMessage({ message, collapsed }: { message: CommsMessage; collapsed:
   const identity = getIdentity(message.from_agent)
   const toIdentity = getIdentity(message.to_agent)
   const isHandoff = message.message_type === 'handoff'
+  const isToolCall = message.message_type === 'tool_call' || Boolean(message.metadata?.toolName)
 
   // Inject @mention of target at start if it's a directed message
   const mentionPrefix = message.to_agent ? `@${message.to_agent}` : null
@@ -538,20 +539,39 @@ function ChatMessage({ message, collapsed }: { message: CommsMessage; collapsed:
           </div>
         )}
 
-        <div className="text-[13px] text-foreground/90 leading-[1.45] break-words">
-          {mentionPrefix && (
-            <span
-              className="font-medium rounded px-0.5 cursor-default"
-              style={{
-                color: toIdentity.color,
-                backgroundColor: toIdentity.color + '15',
-              }}
-            >
-              @{toIdentity.label}
-            </span>
-          )}{' '}
-          {message.content}
-        </div>
+        {isToolCall ? (
+          <div className="rounded-lg border border-cyan-500/30 bg-cyan-500/8 px-2.5 py-2">
+            <div className="text-[10px] uppercase tracking-wide text-cyan-300/90">Tool Call</div>
+            <div className="mt-1 text-[12px] font-medium text-cyan-100">
+              {message.metadata?.toolName || message.content}
+            </div>
+            {message.metadata?.input && (
+              <pre className="mt-1.5 whitespace-pre-wrap break-words rounded bg-black/20 px-2 py-1.5 text-[10px] text-cyan-200/85">
+                {String(message.metadata.input)}
+              </pre>
+            )}
+            {message.metadata?.output && (
+              <pre className="mt-1 whitespace-pre-wrap break-words rounded bg-black/15 px-2 py-1.5 text-[10px] text-cyan-100/75">
+                {String(message.metadata.output)}
+              </pre>
+            )}
+          </div>
+        ) : (
+          <div className="text-[13px] text-foreground/90 leading-[1.45] break-words">
+            {mentionPrefix && (
+              <span
+                className="font-medium rounded px-0.5 cursor-default"
+                style={{
+                  color: toIdentity.color,
+                  backgroundColor: toIdentity.color + '15',
+                }}
+              >
+                @{toIdentity.label}
+              </span>
+            )}{' '}
+            {message.content}
+          </div>
+        )}
 
         {/* Metadata (if any) */}
         {message.metadata && Object.keys(message.metadata).length > 0 && (

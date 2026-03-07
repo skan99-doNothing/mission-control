@@ -14,6 +14,13 @@ type ForwardInfo = {
   runId?: string
 }
 
+type ToolEvent = {
+  name: string
+  input?: string
+  output?: string
+  status?: string
+}
+
 const COORDINATOR_AGENT =
   String(process.env.MC_COORDINATOR_AGENT || process.env.NEXT_PUBLIC_COORDINATOR_AGENT || 'coordinator').trim() ||
   'coordinator'
@@ -31,6 +38,15 @@ function parseGatewayJson(raw: string): any | null {
   }
 }
 
+function safeParseMetadata(raw: string | null | undefined): any | null {
+  if (!raw) return null
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+}
+
 function createChatReply(
   db: ReturnType<typeof getDatabase>,
   workspaceId: number,
@@ -38,7 +54,7 @@ function createChatReply(
   fromAgent: string,
   toAgent: string,
   content: string,
-  messageType: 'text' | 'status' = 'status',
+  messageType: 'text' | 'status' | 'tool_call' = 'status',
   metadata: Record<string, any> | null = null
 ) {
   const replyInsert = db
@@ -62,7 +78,7 @@ function createChatReply(
 
   eventBus.broadcast('chat.message', {
     ...row,
-    metadata: row.metadata ? JSON.parse(row.metadata) : null,
+    metadata: safeParseMetadata(row.metadata),
   })
 }
 
@@ -91,7 +107,106 @@ function extractReplyText(waitPayload: any): string | null {
     }
   }
 
+  if (Array.isArray(waitPayload.output)) {
+    const parts: string[] = []
+    for (const item of waitPayload.output) {
+      if (!item || typeof item !== 'object') continue
+      if (typeof item.text === 'string' && item.text.trim()) parts.push(item.text.trim())
+      if (item.type === 'message' && Array.isArray(item.content)) {
+        for (const block of item.content) {
+          if (!block || typeof block !== 'object') continue
+          const blockType = String(block.type || '')
+          if ((blockType === 'text' || blockType === 'output_text' || blockType === 'input_text') && typeof block.text === 'string' && block.text.trim()) {
+            parts.push(block.text.trim())
+          }
+        }
+      }
+    }
+    if (parts.length > 0) return parts.join('\n').slice(0, 8000)
+  }
+
   return null
+}
+
+function normalizeToolEvent(raw: any): ToolEvent | null {
+  if (!raw || typeof raw !== 'object') return null
+  const name = String(raw.name || raw.tool || raw.toolName || raw.function || raw.call || '').trim()
+  if (!name) return null
+
+  const inputRaw = raw.input ?? raw.args ?? raw.arguments ?? raw.params
+  const outputRaw = raw.output ?? raw.result ?? raw.response
+  const statusRaw =
+    raw.status ??
+    (raw.isError === true ? 'error' : undefined) ??
+    (raw.ok === false ? 'error' : undefined) ??
+    (raw.success === true ? 'ok' : undefined)
+
+  const input =
+    typeof inputRaw === 'string'
+      ? inputRaw.slice(0, 2000)
+      : inputRaw !== undefined
+        ? JSON.stringify(inputRaw).slice(0, 2000)
+        : undefined
+  const output =
+    typeof outputRaw === 'string'
+      ? outputRaw.slice(0, 4000)
+      : outputRaw !== undefined
+        ? JSON.stringify(outputRaw).slice(0, 4000)
+        : undefined
+  const status = statusRaw !== undefined ? String(statusRaw).slice(0, 60) : undefined
+  return { name, input, output, status }
+}
+
+function extractToolEvents(waitPayload: any): ToolEvent[] {
+  if (!waitPayload || typeof waitPayload !== 'object') return []
+
+  const candidates = [
+    waitPayload.toolCalls,
+    waitPayload.tools,
+    waitPayload.calls,
+    waitPayload.events,
+    waitPayload.output?.toolCalls,
+    waitPayload.output?.tools,
+    waitPayload.output?.events,
+  ]
+
+  const events: ToolEvent[] = []
+  for (const list of candidates) {
+    if (!Array.isArray(list)) continue
+    for (const item of list) {
+      const evt = normalizeToolEvent(item)
+      if (evt) events.push(evt)
+      if (events.length >= 20) return events
+    }
+  }
+
+  // OpenAI Responses-style output array
+  if (Array.isArray(waitPayload.output)) {
+    for (const item of waitPayload.output) {
+      if (!item || typeof item !== 'object') continue
+      const itemType = String(item.type || '').toLowerCase()
+      if (itemType === 'function_call' || itemType === 'tool_call') {
+        const evt = normalizeToolEvent({
+          name: item.name || item.tool_name || item.toolName,
+          arguments: item.arguments || item.input,
+          output: item.output || item.result,
+          status: item.status,
+        })
+        if (evt) events.push(evt)
+      } else if (itemType === 'message' && Array.isArray(item.content)) {
+        for (const block of item.content) {
+          const blockType = String(block?.type || '').toLowerCase()
+          if (blockType === 'tool_use' || blockType === 'tool_call' || blockType === 'function_call') {
+            const evt = normalizeToolEvent(block)
+            if (evt) events.push(evt)
+          }
+        }
+      }
+      if (events.length >= 20) return events
+    }
+  }
+
+  return events
 }
 
 /**
@@ -144,7 +259,7 @@ export async function GET(request: NextRequest) {
 
     const parsed = messages.map((msg) => ({
       ...msg,
-      metadata: msg.metadata ? JSON.parse(msg.metadata) : null
+      metadata: safeParseMetadata(msg.metadata),
     }))
 
     // Get total count for pagination
@@ -403,6 +518,29 @@ export async function POST(request: NextRequest) {
 
                 const waitPayload = parseGatewayJson(waitResult.stdout)
                 const waitStatus = String(waitPayload?.status || '').toLowerCase()
+                const toolEvents = extractToolEvents(waitPayload)
+
+                if (toolEvents.length > 0) {
+                  for (const evt of toolEvents) {
+                    createChatReply(
+                      db,
+                      workspaceId,
+                      conversation_id,
+                      COORDINATOR_AGENT,
+                      from,
+                      evt.name,
+                      'tool_call',
+                      {
+                        event: 'tool_call',
+                        toolName: evt.name,
+                        input: evt.input || null,
+                        output: evt.output || null,
+                        status: evt.status || null,
+                        runId: forwardInfo.runId || null,
+                      }
+                    )
+                  }
+                }
 
                 if (waitStatus === 'error') {
                   const reason =
@@ -485,7 +623,7 @@ export async function POST(request: NextRequest) {
     const created = db.prepare('SELECT * FROM messages WHERE id = ? AND workspace_id = ?').get(messageId, workspaceId) as Message
     const parsedMessage = {
       ...created,
-      metadata: created.metadata ? JSON.parse(created.metadata) : null
+      metadata: safeParseMetadata(created.metadata),
     }
 
     // Broadcast to SSE clients

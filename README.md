@@ -133,7 +133,7 @@ Automatically discovers agent definitions from `~/.agents/`, `~/.codex/agents/`,
 Define agent personality, capabilities, and behavioral guidelines via SOUL markdown files. Edit in the UI or directly in workspace `soul.md` files — changes sync bidirectionally between disk and database.
 
 ### Agent Messaging
-Inter-agent communication via the comms API. Agents can send messages to each other, enabling coordinated multi-agent workflows.
+Session-threaded inter-agent communication via the comms API (`a2a:*`, `coord:*`, `session:*`) with coordinator inbox support and runtime tool-call visibility in the `agent-comms` feed.
 
 ### Integrations
 Outbound webhooks with delivery history, configurable alert rules with cooldowns, and multi-gateway connection management. Optional 1Password CLI integration for secret management.
