@@ -432,6 +432,42 @@ export function MemoryGraph() {
     ctx.restore()
   }, [searchQuery])
 
+  // --- Fit to view ---
+  const fitToView = useCallback(() => {
+    const canvas = canvasRef.current
+    const nodes = nodesRef.current
+    if (!canvas || !nodes.length) return
+
+    const dpr = window.devicePixelRatio || 1
+    const w = canvas.width / dpr
+    const h = canvas.height / dpr
+    if (w === 0 || h === 0) return
+
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+    for (const node of nodes) {
+      if (node.x == null || node.y == null) continue
+      const r = node.radius
+      minX = Math.min(minX, node.x - r)
+      maxX = Math.max(maxX, node.x + r)
+      minY = Math.min(minY, node.y - r)
+      maxY = Math.max(maxY, node.y + r)
+    }
+
+    if (!isFinite(minX)) return
+
+    const graphW = maxX - minX || 1
+    const graphH = maxY - minY || 1
+    const padding = 60
+    const scaleX = (w - padding * 2) / graphW
+    const scaleY = (h - padding * 2) / graphH
+    const k = Math.min(scaleX, scaleY, 2) // cap max zoom at 2x
+
+    const cx = (minX + maxX) / 2
+    const cy = (minY + maxY) / 2
+
+    transformRef.current = { x: -cx * k, y: -cy * k, k }
+  }, [])
+
   // --- Simulation setup ---
 
   useEffect(() => {
@@ -493,12 +529,26 @@ export function MemoryGraph() {
       .alphaDecay(0.012)
       .velocityDecay(0.3)
 
+    let tickCount = 0
+    let hasFitted = false
+
     sim.on('tick', () => {
+      tickCount++
+      // Auto-fit after simulation has warmed up
+      if (!hasFitted && tickCount === 60) {
+        hasFitted = true
+        fitToView()
+      }
       draw()
     })
 
     sim.on('end', () => {
       isSimRunningRef.current = false
+      if (!hasFitted) {
+        hasFitted = true
+        fitToView()
+        draw()
+      }
     })
 
     isSimRunningRef.current = true
