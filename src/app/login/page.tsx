@@ -1,7 +1,6 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState, FormEvent } from 'react'
-import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
 declare global {
   interface Window {
@@ -28,7 +27,6 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [googleLoading, setGoogleLoading] = useState(false)
   const [googleReady, setGoogleReady] = useState(false)
-  const router = useRouter()
   const googleCallbackRef = useRef<((response: any) => void) | null>(null)
 
   const googleClientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID || ''
@@ -56,10 +54,11 @@ export default function LoginPage() {
       return false
     }
 
-    router.push('/')
-    router.refresh()
+    // Full reload ensures the session cookie is sent on all subsequent requests.
+    // router.push() + refresh() can race and use stale RSC payloads.
+    window.location.href = '/'
     return true
-  }, [router])
+  }, [])
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault()
