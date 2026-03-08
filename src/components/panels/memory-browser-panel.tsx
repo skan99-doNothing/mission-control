@@ -4,7 +4,12 @@ import React, { useState, useEffect, useCallback, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
 import { useMissionControl } from '@/store'
 import { createClientLogger } from '@/lib/client-logger'
-import { MemoryGraph } from './memory-graph'
+import dynamic from 'next/dynamic'
+
+const MemoryGraph = dynamic(
+  () => import('./memory-graph').then((m) => ({ default: m.MemoryGraph })),
+  { ssr: false }
+)
 
 const log = createClientLogger('MemoryBrowser')
 
@@ -534,7 +539,7 @@ export function MemoryBrowserPanel() {
         {/* Main content */}
         <div className="flex-1 min-w-0 flex flex-col bg-[hsl(var(--surface-0))]">
           {activeView === 'graph' && !isLocal ? (
-            <div className="flex-1 p-4 overflow-auto flex flex-col"><MemoryGraph /></div>
+            <div className="flex-1 p-4 overflow-hidden flex flex-col"><MemoryGraph /></div>
           ) : activeView === 'health' ? (
             <div className="flex-1 overflow-auto p-6"><HealthView report={healthReport} isLoading={isLoadingHealth} onRefresh={loadHealth} /></div>
           ) : activeView === 'pipeline' ? (

@@ -1,18 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import {
-  forceSimulation,
-  forceLink,
-  forceManyBody,
-  forceCenter,
-  forceCollide,
-  forceX,
-  forceY,
-  type Simulation,
-  type SimulationNodeDatum,
-  type SimulationLinkDatum,
-} from 'd3-force'
+import { GraphCanvas, GraphCanvasRef, type Theme, type GraphNode as ReagraphNode, type GraphEdge as ReagraphEdge, type InternalGraphNode } from 'reagraph'
 import { Button } from '@/components/ui/button'
 
 // --- Data interfaces (match API response) ---
@@ -29,29 +18,6 @@ interface AgentGraphData {
   totalChunks: number
   totalFiles: number
   files: AgentFileInfo[]
-}
-
-// --- Simulation node/link types ---
-
-interface GraphNode extends SimulationNodeDatum {
-  id: string
-  type: 'hub' | 'file'
-  label: string
-  radius: number
-  color: string
-  // hub-specific
-  agentName?: string
-  totalChunks?: number
-  totalFiles?: number
-  dbSize?: number
-  // file-specific
-  filePath?: string
-  chunks?: number
-  textSize?: number
-}
-
-interface GraphLink extends SimulationLinkDatum<GraphNode> {
-  color: string
 }
 
 // --- Color palette ---
@@ -93,11 +59,48 @@ function formatBytes(bytes: number): string {
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i]
 }
 
-function hexToRgba(hex: string, alpha: number): string {
-  const r = parseInt(hex.slice(1, 3), 16)
-  const g = parseInt(hex.slice(3, 5), 16)
-  const b = parseInt(hex.slice(5, 7), 16)
-  return `rgba(${r},${g},${b},${alpha})`
+// --- Obsidian-style theme ---
+
+const obsidianTheme: Theme = {
+  canvas: {
+    background: '#0a0e14',
+    fog: '#0a0e14',
+  },
+  node: {
+    fill: '#6366f1',
+    activeFill: '#a78bfa',
+    opacity: 1,
+    selectedOpacity: 1,
+    inactiveOpacity: 0.08,
+    label: {
+      color: '#e2e8f0',
+      stroke: '#000000',
+      activeColor: '#ffffff',
+    },
+  },
+  ring: {
+    fill: '#6366f1',
+    activeFill: '#a78bfa',
+  },
+  edge: {
+    fill: '#334155',
+    activeFill: '#a78bfa',
+    opacity: 0.12,
+    selectedOpacity: 0.6,
+    inactiveOpacity: 0.03,
+    label: {
+      color: '#94a3b8',
+      activeColor: '#e2e8f0',
+    },
+  },
+  arrow: {
+    fill: '#334155',
+    activeFill: '#a78bfa',
+  },
+  lasso: {
+    background: 'rgba(99, 102, 241, 0.1)',
+    border: 'rgba(99, 102, 241, 0.3)',
+  },
 }
 
 // --- Component ---
@@ -109,21 +112,9 @@ export function MemoryGraph() {
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedFile, setSelectedFile] = useState<AgentFileInfo | null>(null)
+  const [actives, setActives] = useState<string[]>([])
 
-  const canvasRef = useRef<HTMLCanvasElement>(null)
-  const containerRef = useRef<HTMLDivElement>(null)
-  const simRef = useRef<Simulation<GraphNode, GraphLink> | null>(null)
-  const nodesRef = useRef<GraphNode[]>([])
-  const linksRef = useRef<GraphLink[]>([])
-  const transformRef = useRef({ x: 0, y: 0, k: 1 })
-  const hoveredNodeRef = useRef<GraphNode | null>(null)
-  const dragNodeRef = useRef<GraphNode | null>(null)
-  const isDraggingRef = useRef(false)
-  const isPanningRef = useRef(false)
-  const lastMouseRef = useRef({ x: 0, y: 0 })
-  const rafRef = useRef<number>(0)
-  const isSimRunningRef = useRef(false)
-  const tooltipRef = useRef<HTMLDivElement>(null)
+  const graphRef = useRef<GraphCanvasRef | null>(null)
 
   // Fetch data
   const fetchData = useCallback(async () => {
@@ -157,79 +148,63 @@ export function MemoryGraph() {
     return { totalAgents, totalFiles, totalChunks, totalSize }
   }, [agents])
 
-  // Build simulation nodes/links from data
-  const { simNodes, simLinks } = useMemo(() => {
-    if (!agents.length) return { simNodes: [], simLinks: [] }
+  // Build reagraph nodes/edges from API data
+  const { graphNodes, graphEdges } = useMemo(() => {
+    if (!agents.length) return { graphNodes: [], graphEdges: [] }
 
-    const nodes: GraphNode[] = []
-    const links: GraphLink[] = []
+    const nodes: ReagraphNode[] = []
+    const edges: ReagraphEdge[] = []
 
     if (selectedAgent === 'all') {
-      // All-agents: hub nodes only, with files around each
       agents.forEach((agent, i) => {
         const color = AGENT_COLORS[i % AGENT_COLORS.length]
-        const hubRadius = Math.max(16, Math.min(36, 12 + Math.sqrt(agent.totalChunks) * 1.5))
+        const hubSize = Math.max(5, Math.min(15, 4 + Math.sqrt(agent.totalChunks) * 0.8))
 
         nodes.push({
           id: `hub-${agent.name}`,
-          type: 'hub',
           label: agent.name,
-          radius: hubRadius,
-          color,
-          agentName: agent.name,
-          totalChunks: agent.totalChunks,
-          totalFiles: agent.totalFiles,
-          dbSize: agent.dbSize,
+          subLabel: `${agent.totalChunks} chunks`,
+          fill: color,
+          size: hubSize,
         })
 
-        // Add file nodes for each agent (limit for perf)
         const maxFiles = 30
         const files = agent.files.slice(0, maxFiles)
         files.forEach((file, fi) => {
-          const fileRadius = Math.max(3, Math.min(10, 2 + Math.sqrt(file.chunks) * 1.2))
+          const fileSize = Math.max(2, Math.min(6, 1.5 + Math.sqrt(file.chunks) * 0.7))
           const fileColor = getFileColor(file.path)
           const nodeId = `file-${agent.name}-${fi}`
 
           nodes.push({
             id: nodeId,
-            type: 'file',
             label: file.path.split('/').pop() || file.path,
-            radius: fileRadius,
-            color: fileColor,
-            filePath: file.path,
-            chunks: file.chunks,
-            textSize: file.textSize,
-            agentName: agent.name,
+            fill: fileColor,
+            size: fileSize,
+            data: { filePath: file.path, chunks: file.chunks, textSize: file.textSize, agentName: agent.name },
           })
 
-          links.push({
+          edges.push({
+            id: `edge-hub-${agent.name}-${nodeId}`,
             source: `hub-${agent.name}`,
             target: nodeId,
-            color,
+            fill: color,
           })
         })
       })
     } else {
-      // Single-agent: hub at center, all files around
       const agent = agents.find((a) => a.name === selectedAgent)
-      if (!agent) return { simNodes: [], simLinks: [] }
+      if (!agent) return { graphNodes: [], graphEdges: [] }
 
       const agentIdx = agents.indexOf(agent)
       const color = AGENT_COLORS[agentIdx % AGENT_COLORS.length]
-      const hubRadius = Math.max(20, Math.min(40, 14 + Math.sqrt(agent.totalChunks) * 1.5))
+      const hubSize = Math.max(6, Math.min(18, 5 + Math.sqrt(agent.totalChunks) * 0.8))
 
       nodes.push({
         id: `hub-${agent.name}`,
-        type: 'hub',
         label: agent.name,
-        radius: hubRadius,
-        color,
-        agentName: agent.name,
-        totalChunks: agent.totalChunks,
-        totalFiles: agent.totalFiles,
-        dbSize: agent.dbSize,
-        fx: 0,
-        fy: 0,
+        subLabel: `${agent.totalChunks} chunks / ${agent.totalFiles} files`,
+        fill: color,
+        size: hubSize,
       })
 
       let files = agent.files
@@ -242,30 +217,27 @@ export function MemoryGraph() {
       const displayFiles = files.slice(0, maxFiles)
 
       displayFiles.forEach((file, fi) => {
-        const fileRadius = Math.max(4, Math.min(14, 3 + Math.sqrt(file.chunks) * 1.5))
+        const fileSize = Math.max(2, Math.min(8, 2 + Math.sqrt(file.chunks) * 0.8))
         const fileColor = getFileColor(file.path)
         const nodeId = `file-${agent.name}-${fi}`
 
         nodes.push({
           id: nodeId,
-          type: 'file',
           label: file.path.split('/').pop() || file.path,
-          radius: fileRadius,
-          color: fileColor,
-          filePath: file.path,
-          chunks: file.chunks,
-          textSize: file.textSize,
-          agentName: agent.name,
+          fill: fileColor,
+          size: fileSize,
+          data: { filePath: file.path, chunks: file.chunks, textSize: file.textSize, agentName: agent.name },
         })
 
-        links.push({
+        edges.push({
+          id: `edge-hub-${agent.name}-${nodeId}`,
           source: `hub-${agent.name}`,
           target: nodeId,
-          color,
+          fill: color,
         })
       })
 
-      // Weak inter-file links for same-directory clustering
+      // Weak inter-file edges for same-directory clustering
       const dirMap = new Map<string, string[]>()
       displayFiles.forEach((file, fi) => {
         const dir = file.path.split('/').slice(0, -1).join('/')
@@ -276,557 +248,44 @@ export function MemoryGraph() {
       })
       for (const ids of dirMap.values()) {
         for (let i = 0; i < ids.length - 1 && i < 5; i++) {
-          links.push({
+          edges.push({
+            id: `edge-dir-${ids[i]}-${ids[i + 1]}`,
             source: ids[i],
             target: ids[i + 1],
-            color: 'rgba(255,255,255,0.05)',
           })
         }
       }
     }
 
-    return { simNodes: nodes, simLinks: links }
+    return { graphNodes: nodes, graphEdges: edges }
   }, [agents, selectedAgent, searchQuery])
 
-  // --- Canvas drawing ---
-
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-    const ctx = canvas.getContext('2d')
-    if (!ctx) return
-
-    const dpr = window.devicePixelRatio || 1
-    const w = canvas.width / dpr
-    const h = canvas.height / dpr
-
-    const { x: tx, y: ty, k } = transformRef.current
-    const nodes = nodesRef.current
-    const links = linksRef.current
-    const hoveredNode = hoveredNodeRef.current
-
-    ctx.clearRect(0, 0, canvas.width, canvas.height)
-    ctx.save()
-    ctx.scale(dpr, dpr)
-
-    // Dot grid background
-    const gridSize = 40
-    ctx.fillStyle = 'rgba(34,211,238,0.04)'
-    const startX = (-tx / k) % gridSize
-    const startY = (-ty / k) % gridSize
-    for (let gx = -startX; gx < w; gx += gridSize / k) {
-      for (let gy = -startY; gy < h; gy += gridSize / k) {
-        ctx.fillRect(gx, gy, 1, 1)
-      }
+  // Interaction handlers
+  const handleNodeClick = useCallback((node: InternalGraphNode) => {
+    const id = node.id
+    if (id.startsWith('hub-') && selectedAgent === 'all') {
+      const agentName = id.replace('hub-', '')
+      setSelectedAgent(agentName)
+      setSelectedFile(null)
+      setSearchQuery('')
+      setActives([])
+    } else if (id.startsWith('file-') && node.data) {
+      const { filePath, chunks, textSize } = node.data as { filePath: string; chunks: number; textSize: number }
+      setSelectedFile({ path: filePath, chunks, textSize })
     }
+  }, [selectedAgent])
 
-    // Apply transform
-    ctx.translate(w / 2 + tx, h / 2 + ty)
-    ctx.scale(k, k)
-
-    // Determine connected set for hover highlighting
-    const connectedSet = new Set<string>()
-    if (hoveredNode) {
-      connectedSet.add(hoveredNode.id)
-      for (const link of links) {
-        const src = typeof link.source === 'object' ? link.source.id : String(link.source)
-        const tgt = typeof link.target === 'object' ? link.target.id : String(link.target)
-        if (src === hoveredNode.id) connectedSet.add(tgt)
-        if (tgt === hoveredNode.id) connectedSet.add(src)
-      }
-    }
-
-    // Draw edges
-    for (const link of links) {
-      const src = link.source as GraphNode
-      const tgt = link.target as GraphNode
-      if (src.x == null || src.y == null || tgt.x == null || tgt.y == null) continue
-
-      let alpha = 0.15
-      if (hoveredNode) {
-        const srcConnected = connectedSet.has(src.id)
-        const tgtConnected = connectedSet.has(tgt.id)
-        alpha = srcConnected && tgtConnected ? 0.6 : 0.04
-      }
-
-      ctx.beginPath()
-      ctx.moveTo(src.x, src.y)
-      ctx.lineTo(tgt.x, tgt.y)
-      ctx.strokeStyle = hexToRgba(link.color.startsWith('#') ? link.color : '#ffffff', alpha)
-      ctx.lineWidth = hoveredNode && connectedSet.has(src.id) && connectedSet.has(tgt.id) ? 1.5 : 0.5
-      ctx.stroke()
-    }
-
-    // Draw nodes
-    for (const node of nodes) {
-      if (node.x == null || node.y == null) continue
-
-      let alpha = 1.0
-      let glowing = false
-      if (hoveredNode) {
-        if (node.id === hoveredNode.id) {
-          glowing = true
-        } else if (connectedSet.has(node.id)) {
-          alpha = 0.9
-        } else {
-          alpha = 0.15
-        }
-      }
-
-      // Search highlighting
-      if (searchQuery && node.type === 'file') {
-        const q = searchQuery.toLowerCase()
-        const matches = node.label.toLowerCase().includes(q) ||
-          (node.filePath != null && node.filePath.toLowerCase().includes(q))
-        if (!matches) alpha = Math.min(alpha, 0.1)
-        if (matches && !hoveredNode) glowing = true
-      }
-
-      const r = node.radius
-
-      // Glow effect
-      if (glowing) {
-        const gradient = ctx.createRadialGradient(node.x, node.y, r, node.x, node.y, r * 3)
-        gradient.addColorStop(0, hexToRgba(node.color, 0.3))
-        gradient.addColorStop(1, hexToRgba(node.color, 0))
-        ctx.fillStyle = gradient
-        ctx.fillRect(node.x - r * 3, node.y - r * 3, r * 6, r * 6)
-      }
-
-      // Node circle
-      ctx.beginPath()
-      ctx.arc(node.x, node.y, r, 0, Math.PI * 2)
-
-      if (node.type === 'hub') {
-        ctx.fillStyle = hexToRgba(node.color, 0.15 * alpha)
-        ctx.fill()
-        ctx.strokeStyle = hexToRgba(node.color, 0.8 * alpha)
-        ctx.lineWidth = 2
-        ctx.stroke()
-      } else {
-        ctx.fillStyle = hexToRgba(node.color, 0.7 * alpha)
-        ctx.fill()
-      }
-
-      // Labels
-      const showLabels = node.type === 'hub' || k > 1.2 || glowing || node.id === hoveredNode?.id
-      if (showLabels) {
-        const fontSize = node.type === 'hub' ? Math.max(10, r * 0.6) : Math.max(8, 9)
-        ctx.font = `${node.type === 'hub' ? 'bold ' : ''}${fontSize}px ui-monospace, monospace`
-        ctx.textAlign = 'center'
-        ctx.textBaseline = node.type === 'hub' ? 'middle' : 'top'
-        ctx.fillStyle = hexToRgba(node.color, alpha)
-
-        if (node.type === 'hub') {
-          ctx.fillText(node.label, node.x, node.y - 4)
-          // Sub-label
-          ctx.font = `${Math.max(7, r * 0.35)}px ui-monospace, monospace`
-          ctx.fillStyle = hexToRgba('#94a3b8', 0.7 * alpha)
-          ctx.fillText(`${node.totalChunks} chunks`, node.x, node.y + fontSize * 0.5)
-        } else {
-          ctx.fillText(node.label, node.x, node.y + r + 3)
-        }
-      }
-    }
-
-    ctx.restore()
-  }, [searchQuery])
-
-  // --- Fit to view ---
-  const fitToView = useCallback(() => {
-    const canvas = canvasRef.current
-    const nodes = nodesRef.current
-    if (!canvas || !nodes.length) return
-
-    const dpr = window.devicePixelRatio || 1
-    const w = canvas.width / dpr
-    const h = canvas.height / dpr
-    if (w === 0 || h === 0) return
-
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
-    for (const node of nodes) {
-      if (node.x == null || node.y == null) continue
-      const r = node.radius
-      minX = Math.min(minX, node.x - r)
-      maxX = Math.max(maxX, node.x + r)
-      minY = Math.min(minY, node.y - r)
-      maxY = Math.max(maxY, node.y + r)
-    }
-
-    if (!isFinite(minX)) return
-
-    const graphW = maxX - minX || 1
-    const graphH = maxY - minY || 1
-    const padding = 60
-    const scaleX = (w - padding * 2) / graphW
-    const scaleY = (h - padding * 2) / graphH
-    const k = Math.min(scaleX, scaleY, 2) // cap max zoom at 2x
-
-    const cx = (minX + maxX) / 2
-    const cy = (minY + maxY) / 2
-
-    transformRef.current = { x: -cx * k, y: -cy * k, k }
+  const handleNodeHover = useCallback((node: InternalGraphNode) => {
+    setActives([node.id])
   }, [])
 
-  // --- Simulation setup ---
-
-  useEffect(() => {
-    if (!simNodes.length) {
-      nodesRef.current = []
-      linksRef.current = []
-      if (simRef.current) {
-        simRef.current.stop()
-        simRef.current = null
-      }
-      draw()
-      return
-    }
-
-    // Copy nodes to avoid mutating memoized data
-    const nodes: GraphNode[] = simNodes.map((n) => ({ ...n }))
-    const links: GraphLink[] = simLinks.map((l) => ({ ...l }))
-
-    nodesRef.current = nodes
-    linksRef.current = links
-
-    // Reset transform
-    transformRef.current = { x: 0, y: 0, k: 1 }
-    hoveredNodeRef.current = null
-
-    const isAllView = selectedAgent === 'all'
-
-    const sim = forceSimulation<GraphNode>(nodes)
-      .force(
-        'link',
-        forceLink<GraphNode, GraphLink>(links)
-          .id((d) => d.id)
-          .distance((l) => {
-            const src = l.source as GraphNode
-            const tgt = l.target as GraphNode
-            if (src.type === 'hub' || tgt.type === 'hub') {
-              return isAllView ? 60 + (tgt as GraphNode).radius * 2 : 80 + (tgt as GraphNode).radius * 3
-            }
-            return 20 // inter-file directory links
-          })
-          .strength((l) => {
-            const src = l.source as GraphNode
-            const tgt = l.target as GraphNode
-            if (src.type === 'hub' || tgt.type === 'hub') return 0.6
-            return 0.05 // weak directory clustering
-          })
-      )
-      .force(
-        'charge',
-        forceManyBody<GraphNode>().strength((d) => (d.type === 'hub' ? -400 : -30))
-      )
-      .force('center', forceCenter(0, 0).strength(0.05))
-      .force(
-        'collide',
-        forceCollide<GraphNode>().radius((d) => d.radius + 3).strength(0.7)
-      )
-      .force('x', forceX<GraphNode>(0).strength(0.02))
-      .force('y', forceY<GraphNode>(0).strength(0.02))
-      .alphaDecay(0.012)
-      .velocityDecay(0.3)
-
-    let tickCount = 0
-    let hasFitted = false
-
-    sim.on('tick', () => {
-      tickCount++
-      // Auto-fit after simulation has warmed up
-      if (!hasFitted && tickCount === 60) {
-        hasFitted = true
-        fitToView()
-      }
-      draw()
-    })
-
-    sim.on('end', () => {
-      isSimRunningRef.current = false
-      if (!hasFitted) {
-        hasFitted = true
-        fitToView()
-        draw()
-      }
-    })
-
-    isSimRunningRef.current = true
-    simRef.current = sim
-
-    return () => {
-      sim.stop()
-      simRef.current = null
-    }
-  }, [simNodes, simLinks, selectedAgent, draw])
-
-  // --- Canvas resize ---
-
-  useEffect(() => {
-    const container = containerRef.current
-    const canvas = canvasRef.current
-    if (!container || !canvas) return
-
-    const resize = () => {
-      const dpr = window.devicePixelRatio || 1
-      const rect = container.getBoundingClientRect()
-      if (rect.width === 0 || rect.height === 0) return
-      canvas.width = rect.width * dpr
-      canvas.height = rect.height * dpr
-      canvas.style.width = `${rect.width}px`
-      canvas.style.height = `${rect.height}px`
-      draw()
-    }
-
-    const observer = new ResizeObserver(resize)
-    observer.observe(container)
-    resize()
-
-    // Re-measure after paint in case initial observe fired before layout settled
-    requestAnimationFrame(() => resize())
-    // Additional delayed retries for flex layout settling
-    const t1 = setTimeout(resize, 100)
-    const t2 = setTimeout(resize, 500)
-
-    return () => { observer.disconnect(); clearTimeout(t1); clearTimeout(t2) }
-  }, [draw])
-
-  // --- Interaction handlers ---
-
-  const screenToWorld = useCallback((clientX: number, clientY: number): { wx: number; wy: number } => {
-    const canvas = canvasRef.current
-    if (!canvas) return { wx: 0, wy: 0 }
-    const rect = canvas.getBoundingClientRect()
-    const { x: tx, y: ty, k } = transformRef.current
-    const cx = clientX - rect.left
-    const cy = clientY - rect.top
-    const wx = (cx - rect.width / 2 - tx) / k
-    const wy = (cy - rect.height / 2 - ty) / k
-    return { wx, wy }
+  const handleNodeUnhover = useCallback(() => {
+    setActives([])
   }, [])
 
-  const findNodeAt = useCallback((wx: number, wy: number): GraphNode | null => {
-    const nodes = nodesRef.current
-    // Search in reverse so top-drawn nodes are found first
-    for (let i = nodes.length - 1; i >= 0; i--) {
-      const n = nodes[i]
-      if (n.x == null || n.y == null) continue
-      const dx = wx - n.x
-      const dy = wy - n.y
-      const hitRadius = Math.max(n.radius, 8) // minimum hit target
-      if (dx * dx + dy * dy <= hitRadius * hitRadius) return n
-    }
-    return null
-  }, [])
-
-  const updateTooltip = useCallback((node: GraphNode | null, clientX: number, clientY: number) => {
-    const tip = tooltipRef.current
-    if (!tip) return
-
-    if (!node) {
-      tip.style.display = 'none'
-      return
-    }
-
-    const container = containerRef.current
-    if (!container) return
-    const rect = container.getBoundingClientRect()
-
-    // Build tooltip content safely using textContent
-    tip.textContent = ''
-    if (node.type === 'hub') {
-      const sizeLabel = (node.dbSize || 0) > 1024 * 1024
-        ? `${((node.dbSize || 0) / (1024 * 1024)).toFixed(1)}MB`
-        : `${((node.dbSize || 0) / 1024).toFixed(0)}KB`
-      const title = document.createElement('strong')
-      title.textContent = node.agentName || ''
-      tip.appendChild(title)
-      tip.appendChild(document.createElement('br'))
-      tip.appendChild(document.createTextNode(`${node.totalChunks} chunks / ${node.totalFiles} files`))
-      tip.appendChild(document.createElement('br'))
-      tip.appendChild(document.createTextNode(sizeLabel))
-    } else {
-      const title = document.createElement('strong')
-      title.textContent = node.filePath || ''
-      tip.appendChild(title)
-      tip.appendChild(document.createElement('br'))
-      tip.appendChild(document.createTextNode(`${node.chunks} chunks / ${formatBytes(node.textSize || 0)}`))
-    }
-
-    tip.style.display = 'block'
-
-    // Position tooltip relative to container
-    const tx = clientX - rect.left + 12
-    const ty = clientY - rect.top - 10
-    tip.style.left = `${Math.min(tx, rect.width - 200)}px`
-    tip.style.top = `${Math.max(ty, 0)}px`
-  }, [])
-
-  // Mouse handlers
-  useEffect(() => {
-    const canvas = canvasRef.current
-    if (!canvas) return
-
-    const onMouseDown = (e: MouseEvent) => {
-      const { wx, wy } = screenToWorld(e.clientX, e.clientY)
-      const node = findNodeAt(wx, wy)
-
-      if (node) {
-        dragNodeRef.current = node
-        isDraggingRef.current = true
-        node.fx = node.x
-        node.fy = node.y
-        if (simRef.current) {
-          simRef.current.alphaTarget(0.3).restart()
-          isSimRunningRef.current = true
-        }
-      } else {
-        isPanningRef.current = true
-      }
-      lastMouseRef.current = { x: e.clientX, y: e.clientY }
-    }
-
-    const onMouseMove = (e: MouseEvent) => {
-      if (isDraggingRef.current && dragNodeRef.current) {
-        const { wx, wy } = screenToWorld(e.clientX, e.clientY)
-        dragNodeRef.current.fx = wx
-        dragNodeRef.current.fy = wy
-        updateTooltip(dragNodeRef.current, e.clientX, e.clientY)
-        return
-      }
-
-      if (isPanningRef.current) {
-        const dx = e.clientX - lastMouseRef.current.x
-        const dy = e.clientY - lastMouseRef.current.y
-        transformRef.current.x += dx
-        transformRef.current.y += dy
-        lastMouseRef.current = { x: e.clientX, y: e.clientY }
-        draw()
-        return
-      }
-
-      // Hover detection
-      const { wx, wy } = screenToWorld(e.clientX, e.clientY)
-      const node = findNodeAt(wx, wy)
-      const prev = hoveredNodeRef.current
-
-      if (node !== prev) {
-        hoveredNodeRef.current = node
-        canvas.style.cursor = node ? 'pointer' : 'grab'
-        updateTooltip(node, e.clientX, e.clientY)
-        if (!isSimRunningRef.current) draw()
-      } else if (node) {
-        updateTooltip(node, e.clientX, e.clientY)
-      }
-    }
-
-    const onMouseUp = () => {
-      if (isDraggingRef.current && dragNodeRef.current) {
-        // Pin where dropped
-        dragNodeRef.current.fx = dragNodeRef.current.x
-        dragNodeRef.current.fy = dragNodeRef.current.y
-        if (simRef.current) {
-          simRef.current.alphaTarget(0)
-        }
-        dragNodeRef.current = null
-        isDraggingRef.current = false
-      }
-      isPanningRef.current = false
-    }
-
-    const onClick = (e: MouseEvent) => {
-      if (isDraggingRef.current) return
-      const { wx, wy } = screenToWorld(e.clientX, e.clientY)
-      const node = findNodeAt(wx, wy)
-
-      if (!node) return
-
-      if (node.type === 'hub' && selectedAgent === 'all') {
-        setSelectedAgent(node.agentName!)
-        setSelectedFile(null)
-        setSearchQuery('')
-      } else if (node.type === 'file' && node.filePath) {
-        const agent = agents.find((a) => a.name === node.agentName)
-        const file = agent?.files.find((f) => f.path === node.filePath)
-        if (file) setSelectedFile(file)
-      }
-    }
-
-    const onDblClick = (e: MouseEvent) => {
-      const { wx, wy } = screenToWorld(e.clientX, e.clientY)
-      const node = findNodeAt(wx, wy)
-
-      if (node) {
-        // Unpin on double-click
-        node.fx = null
-        node.fy = null
-        if (simRef.current) {
-          simRef.current.alphaTarget(0.1).restart()
-          isSimRunningRef.current = true
-          setTimeout(() => simRef.current?.alphaTarget(0), 500)
-        }
-      }
-    }
-
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault()
-      const factor = e.deltaY < 0 ? 1.08 : 1 / 1.08
-      const t = transformRef.current
-      const canvasEl = canvasRef.current!
-      const rect = canvasEl.getBoundingClientRect()
-
-      // Zoom toward cursor
-      const cx = e.clientX - rect.left - rect.width / 2
-      const cy = e.clientY - rect.top - rect.height / 2
-
-      const newK = Math.max(0.1, Math.min(5, t.k * factor))
-      const dk = newK / t.k
-
-      t.x = cx - (cx - t.x) * dk
-      t.y = cy - (cy - t.y) * dk
-      t.k = newK
-
-      draw()
-    }
-
-    const onMouseLeave = () => {
-      hoveredNodeRef.current = null
-      updateTooltip(null, 0, 0)
-      isPanningRef.current = false
-      if (isDraggingRef.current && dragNodeRef.current) {
-        dragNodeRef.current.fx = dragNodeRef.current.x
-        dragNodeRef.current.fy = dragNodeRef.current.y
-        if (simRef.current) simRef.current.alphaTarget(0)
-        dragNodeRef.current = null
-        isDraggingRef.current = false
-      }
-      if (!isSimRunningRef.current) draw()
-    }
-
-    canvas.addEventListener('mousedown', onMouseDown)
-    canvas.addEventListener('mousemove', onMouseMove)
-    canvas.addEventListener('mouseup', onMouseUp)
-    canvas.addEventListener('click', onClick)
-    canvas.addEventListener('dblclick', onDblClick)
-    canvas.addEventListener('wheel', onWheel, { passive: false })
-    canvas.addEventListener('mouseleave', onMouseLeave)
-
-    return () => {
-      canvas.removeEventListener('mousedown', onMouseDown)
-      canvas.removeEventListener('mousemove', onMouseMove)
-      canvas.removeEventListener('mouseup', onMouseUp)
-      canvas.removeEventListener('click', onClick)
-      canvas.removeEventListener('dblclick', onDblClick)
-      canvas.removeEventListener('wheel', onWheel)
-      canvas.removeEventListener('mouseleave', onMouseLeave)
-    }
-  }, [screenToWorld, findNodeAt, updateTooltip, draw, selectedAgent, agents])
-
-  // Cleanup raf on unmount
-  useEffect(() => {
-    return () => {
-      if (rafRef.current) cancelAnimationFrame(rafRef.current)
-    }
+  const handleCanvasClick = useCallback(() => {
+    setActives([])
+    setSelectedFile(null)
   }, [])
 
   // --- Render ---
@@ -873,6 +332,7 @@ export function MemoryGraph() {
               setSelectedAgent(e.target.value)
               setSelectedFile(null)
               setSearchQuery('')
+              setActives([])
             }}
             className="px-2 py-1 text-sm bg-surface-1 border border-border rounded-md text-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
           >
@@ -892,6 +352,7 @@ export function MemoryGraph() {
                 setSelectedAgent('all')
                 setSelectedFile(null)
                 setSearchQuery('')
+                setActives([])
               }}
               variant="secondary"
               size="sm"
@@ -909,7 +370,7 @@ export function MemoryGraph() {
         )}
 
         <span className="text-[10px] text-muted-foreground/50 font-mono ml-auto">
-          drag nodes / scroll to zoom / dbl-click to unpin
+          hover to highlight / click hub to drill in / scroll to zoom
         </span>
       </div>
 
@@ -934,19 +395,30 @@ export function MemoryGraph() {
       </div>
 
       {/* Graph canvas */}
-      <div
-        ref={containerRef}
-        className="border border-border rounded-lg overflow-hidden relative bg-[hsl(var(--surface-0))] flex-1 min-h-0"
-        style={{ minHeight: '400px' }}
-      >
-        <canvas
-          ref={canvasRef}
-          style={{ cursor: 'grab', display: 'block' }}
-        />
-        <div
-          ref={tooltipRef}
-          className="absolute pointer-events-none bg-surface-1 border border-border rounded-md px-2.5 py-1.5 text-xs font-mono text-foreground shadow-lg z-10"
-          style={{ display: 'none', maxWidth: '280px' }}
+      <div className="relative flex-1 min-h-0 border border-border rounded-lg overflow-hidden" style={{ minHeight: '400px' }}>
+        <GraphCanvas
+          ref={graphRef}
+          nodes={graphNodes}
+          edges={graphEdges}
+          theme={obsidianTheme}
+          layoutType="forceDirected2d"
+          layoutOverrides={{
+            linkDistance: 100,
+            nodeStrength: -80,
+          }}
+          labelType="auto"
+          edgeArrowPosition="none"
+          animated={true}
+          draggable={true}
+          defaultNodeSize={5}
+          minNodeSize={2}
+          maxNodeSize={15}
+          cameraMode="pan"
+          actives={actives}
+          onNodeClick={handleNodeClick}
+          onNodePointerOver={handleNodeHover}
+          onNodePointerOut={handleNodeUnhover}
+          onCanvasClick={handleCanvasClick}
         />
       </div>
 
