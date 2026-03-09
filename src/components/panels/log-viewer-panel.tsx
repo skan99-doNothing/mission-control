@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
+import { Loader } from '@/components/ui/loader'
 import { useMissionControl } from '@/store'
 import { useSmartPoll } from '@/lib/use-smart-poll'
 import { createClientLogger } from '@/lib/client-logger'
@@ -290,10 +291,7 @@ export function LogViewerPanel() {
           className="h-full overflow-auto p-4 space-y-2 font-mono text-sm"
         >
           {isLoading ? (
-            <div className="flex items-center justify-center h-32">
-              <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-primary"></div>
-              <span className="ml-3 text-muted-foreground">Loading logs...</span>
-            </div>
+            <Loader variant="panel" label="Loading logs" />
           ) : filteredLogs.length === 0 ? (
             <div className="flex items-center justify-center h-32 text-muted-foreground">
               No logs match the current filters
