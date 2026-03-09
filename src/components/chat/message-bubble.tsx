@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { useState } from 'react'
 import { ChatMessage } from '@/store'
 import { detectTextDirection } from '@/lib/chat-utils'
@@ -238,7 +239,15 @@ export function MessageBubble({ message, isHuman, isGrouped }: MessageBubbleProp
             <div className="flex flex-wrap gap-1.5 mb-1.5">
               {message.attachments.map((att, idx) => (
                 att.type.startsWith('image/') ? (
-                  <img key={idx} src={att.dataUrl} alt={att.name} className="max-w-[200px] max-h-[160px] rounded-md object-cover border border-border/30" />
+                  <Image
+                    key={idx}
+                    src={att.dataUrl}
+                    alt={att.name}
+                    width={200}
+                    height={160}
+                    unoptimized
+                    className="max-w-[200px] max-h-[160px] rounded-md object-cover border border-border/30"
+                  />
                 ) : (
                   <div key={idx} className="flex items-center gap-1.5 bg-black/20 rounded-md px-2 py-1 text-xs text-muted-foreground">
                     <span className="font-medium">{att.name}</span>

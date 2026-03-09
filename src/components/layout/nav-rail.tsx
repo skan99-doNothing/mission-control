@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { useState, useEffect } from 'react'
 import { useMissionControl } from '@/store'
 import { useNavigateToPanel, usePrefetchPanel } from '@/lib/navigation'
@@ -184,7 +185,13 @@ export function NavRail() {
         {/* Header: Logo + toggle */}
         <div className={`flex items-center shrink-0 ${sidebarExpanded ? 'px-3 py-3 gap-2.5' : 'flex-col py-3 gap-2'}`}>
           <div className="w-9 h-9 rounded-lg overflow-hidden bg-background border border-border/50 flex items-center justify-center shrink-0 hover:border-void-cyan/40 hover:glow-cyan transition-smooth">
-            <img src="/brand/mc-logo-128.png" alt="Mission Control logo" className="w-full h-full object-cover" />
+            <Image
+              src="/brand/mc-logo-128.png"
+              alt="Mission Control logo"
+              width={36}
+              height={36}
+              className="w-full h-full object-cover"
+            />
           </div>
           {sidebarExpanded && (
             <div className="flex items-baseline gap-2 truncate flex-1 min-w-0">
@@ -775,7 +782,14 @@ function ContextSwitcher({ currentUser, isAdmin, isLocal, isConnected, tenants, 
           expanded ? 'w-8 h-8' : 'w-8 h-8'
         } ${currentUser?.avatar_url ? '' : 'bg-primary/20 text-primary'}`}>
           {currentUser?.avatar_url ? (
-            <img src={currentUser.avatar_url} alt="" className="w-full h-full rounded-full object-cover" />
+            <Image
+              src={currentUser.avatar_url}
+              alt=""
+              width={32}
+              height={32}
+              unoptimized
+              className="w-full h-full rounded-full object-cover"
+            />
           ) : (
             initials
           )}
@@ -818,7 +832,14 @@ function ContextSwitcher({ currentUser, isAdmin, isLocal, isConnected, tenants, 
                   currentUser?.avatar_url ? '' : 'bg-primary/20 text-primary'
                 }`}>
                   {currentUser?.avatar_url ? (
-                    <img src={currentUser.avatar_url} alt="" className="w-full h-full rounded-full object-cover" />
+                    <Image
+                      src={currentUser.avatar_url}
+                      alt=""
+                      width={32}
+                      height={32}
+                      unoptimized
+                      className="w-full h-full rounded-full object-cover"
+                    />
                   ) : (
                     initials
                   )}

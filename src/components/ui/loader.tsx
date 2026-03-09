@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { APP_VERSION } from '@/lib/version'
 
 function ClaudeMark({ className, style }: { className?: string; style?: React.CSSProperties }) {
@@ -93,7 +94,13 @@ function PageLoader({ steps }: { steps?: InitStep[] }) {
               </div>
               {/* Left: OpenClaw */}
               <div className="absolute left-0 top-1/2 -translate-y-1/2 opacity-0 animate-converge-left">
-                <img src="/brand/openclaw-logo.png" alt="OpenClaw" className="w-9 h-9 rounded-lg" />
+                <Image
+                  src="/brand/openclaw-logo.png"
+                  alt="OpenClaw"
+                  width={36}
+                  height={36}
+                  className="w-9 h-9 rounded-lg"
+                />
               </div>
               {/* Right: Codex */}
               <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 animate-converge-right">
@@ -110,7 +117,13 @@ function PageLoader({ steps }: { steps?: InitStep[] }) {
           {/* Phase 2: MC mark emerges (fades in at 2.0s) */}
           <div className="absolute inset-0 flex items-center justify-center opacity-0 animate-mc-fade-in">
             <div className="animate-float" style={{ animationDelay: '2.7s' }}>
-              <img src="/brand/mc-logo-128.png" alt="Mission Control" className="w-14 h-14" />
+              <Image
+                src="/brand/mc-logo-128.png"
+                alt="Mission Control"
+                width={56}
+                height={56}
+                className="w-14 h-14"
+              />
             </div>
           </div>
         </div>

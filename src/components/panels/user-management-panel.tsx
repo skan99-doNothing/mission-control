@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { useMissionControl } from '@/store'
@@ -268,7 +269,15 @@ export function UserManagementPanel() {
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-2.5">
                         {req.avatar_url ? (
-                          <img src={req.avatar_url} alt="" className="w-8 h-8 rounded-full shrink-0" referrerPolicy="no-referrer" />
+                          <Image
+                            src={req.avatar_url}
+                            alt=""
+                            width={32}
+                            height={32}
+                            unoptimized
+                            referrerPolicy="no-referrer"
+                            className="w-8 h-8 rounded-full shrink-0"
+                          />
                         ) : (
                           <div className="w-8 h-8 rounded-full bg-secondary flex items-center justify-center text-xs font-medium text-muted-foreground shrink-0">
                             {(req.display_name || req.email)?.[0]?.toUpperCase() || '?'}
@@ -414,8 +423,16 @@ export function UserManagementPanel() {
                     <td className="px-4 py-2.5">
                       <div className="flex items-center gap-2">
                         <div className="w-7 h-7 rounded-full bg-primary/20 flex items-center justify-center text-[10px] font-semibold text-primary overflow-hidden">
-                          {/* eslint-disable-next-line @next/next/no-img-element */}
-                          {u.avatar_url ? <img src={u.avatar_url} alt={u.display_name} className="w-7 h-7 object-cover" /> : u.display_name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)}
+                          {u.avatar_url ? (
+                            <Image
+                              src={u.avatar_url}
+                              alt={u.display_name}
+                              width={28}
+                              height={28}
+                              unoptimized
+                              className="w-7 h-7 object-cover"
+                            />
+                          ) : u.display_name.split(' ').map((n) => n[0]).join('').toUpperCase().slice(0, 2)}
                         </div>
                         <div>
                           <div className="text-sm font-medium text-foreground">{u.display_name}</div>

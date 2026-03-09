@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { useRef, useEffect, useState, useCallback } from 'react'
 import { useMissionControl, type ChatAttachment } from '@/store'
 import { Button } from '@/components/ui/button'
@@ -227,7 +228,14 @@ export function ChatInput({ onSend, onAbort, disabled, agents = [], isGenerating
           {attachments.map((att, idx) => (
             <div key={idx} className="relative group rounded-md border border-border/60 bg-surface-1 overflow-hidden">
               {att.type.startsWith('image/') ? (
-                <img src={att.dataUrl} alt={att.name} className="h-16 w-16 object-cover" />
+                <Image
+                  src={att.dataUrl}
+                  alt={att.name}
+                  width={64}
+                  height={64}
+                  unoptimized
+                  className="h-16 w-16 object-cover"
+                />
               ) : (
                 <div className="h-16 w-16 flex flex-col items-center justify-center px-1">
                   <span className="text-lg">F</span>

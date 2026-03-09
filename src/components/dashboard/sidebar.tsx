@@ -1,5 +1,6 @@
 'use client'
 
+import Image from 'next/image'
 import { useEffect, useState } from 'react'
 import { useMissionControl } from '@/store'
 import { useNavigateToPanel } from '@/lib/navigation'
@@ -7,6 +8,34 @@ import { createClientLogger } from '@/lib/client-logger'
 import { Button } from '@/components/ui/button'
 
 const log = createClientLogger('Sidebar')
+
+type SystemStats = {
+  memory?: {
+    used: number
+    total: number
+  }
+  disk?: {
+    usage?: string
+  }
+  processes?: unknown[]
+}
+
+function readSystemStats(value: unknown): SystemStats | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, unknown>
+  const memory = record.memory && typeof record.memory === 'object' ? record.memory as Record<string, unknown> : null
+  const disk = record.disk && typeof record.disk === 'object' ? record.disk as Record<string, unknown> : null
+
+  return {
+    memory: memory && typeof memory.used === 'number' && typeof memory.total === 'number'
+      ? { used: memory.used, total: memory.total }
+      : undefined,
+    disk: disk
+      ? { usage: typeof disk.usage === 'string' ? disk.usage : undefined }
+      : undefined,
+    processes: Array.isArray(record.processes) ? record.processes : undefined,
+  }
+}
 
 interface MenuItem {
   id: string
@@ -37,13 +66,13 @@ const menuItems: MenuItem[] = [
 export function Sidebar() {
   const { activeTab, connection, sessions } = useMissionControl()
   const navigateToPanel = useNavigateToPanel()
-  const [systemStats, setSystemStats] = useState<any>(null)
+  const [systemStats, setSystemStats] = useState<SystemStats | null>(null)
 
   useEffect(() => {
     let cancelled = false
     fetch('/api/status?action=overview')
       .then(res => res.json())
-      .then(data => { if (!cancelled) setSystemStats(data) })
+      .then(data => { if (!cancelled) setSystemStats(readSystemStats(data)) })
       .catch(err => log.error('Failed to fetch system status:', err))
     return () => { cancelled = true }
   }, [])
@@ -57,7 +86,13 @@ export function Sidebar() {
       <div className="p-6 border-b border-border">
         <div className="flex items-center space-x-2">
           <div className="w-8 h-8 rounded-lg overflow-hidden bg-background border border-border/50 flex items-center justify-center">
-            <img src="/brand/mc-logo-128.png" alt="Mission Control logo" className="w-full h-full object-cover" />
+            <Image
+              src="/brand/mc-logo-128.png"
+              alt="Mission Control logo"
+              width={32}
+              height={32}
+              className="w-full h-full object-cover"
+            />
           </div>
           <div>
             <h2 className="font-bold text-foreground">Mission Control</h2>
@@ -151,7 +186,7 @@ export function Sidebar() {
               </div>
               <div className="flex justify-between">
                 <span>Disk:</span>
-                <span>{systemStats.disk.usage || 'N/A'}</span>
+                <span>{systemStats.disk?.usage || 'N/A'}</span>
               </div>
               <div className="flex justify-between">
                 <span>Processes:</span>

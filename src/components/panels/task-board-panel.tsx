@@ -1986,7 +1986,7 @@ function CreateTaskModal({
                     </p>
                   )}
                   {scheduleError && (
-                    <p className="text-xs text-red-400 mt-1">{scheduleError}. Try: "daily at 9am", "every 2 hours", "weekly on monday"</p>
+                    <p className="text-xs text-red-400 mt-1">{scheduleError}. Try: &quot;daily at 9am&quot;, &quot;every 2 hours&quot;, &quot;weekly on monday&quot;</p>
                   )}
                 </div>
               )}
@@ -2188,4 +2188,3 @@ function EditTaskModal({
     </div>
   )
 }
-
