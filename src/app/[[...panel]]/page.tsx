@@ -48,6 +48,8 @@ import { ProjectManagerModal } from '@/components/modals/project-manager-modal'
 import { useWebSocket } from '@/lib/websocket'
 import { useServerEvents } from '@/lib/use-server-events'
 import { completeNavigationTiming } from '@/lib/navigation-metrics'
+import { useNavigateToPanel } from '@/lib/navigation'
+import { Button } from '@/components/ui/button'
 import { useMissionControl } from '@/store'
 
 interface GatewaySummary {
@@ -62,7 +64,7 @@ function isLocalHost(hostname: string): boolean {
 export default function Home() {
   const router = useRouter()
   const { connect } = useWebSocket()
-  const { activeTab, setActiveTab, setCurrentUser, setDashboardMode, setGatewayAvailable, setCapabilitiesChecked, setSubscription, setDefaultOrgName, setUpdateAvailable, setOpenclawUpdate, setShowOnboarding, liveFeedOpen, toggleLiveFeed, showProjectManagerModal, setShowProjectManagerModal, fetchProjects, setChatPanelOpen, bootComplete, setBootComplete, setAgents, setSessions, setProjects } = useMissionControl()
+  const { activeTab, setActiveTab, setCurrentUser, setDashboardMode, setGatewayAvailable, setCapabilitiesChecked, setSubscription, setDefaultOrgName, setUpdateAvailable, setOpenclawUpdate, setShowOnboarding, liveFeedOpen, toggleLiveFeed, showProjectManagerModal, setShowProjectManagerModal, fetchProjects, setChatPanelOpen, bootComplete, setBootComplete, setAgents, setSessions, setProjects, setInterfaceMode, setMemoryGraphAgents, setSkillsData } = useMissionControl()
 
   // Sync URL → Zustand activeTab
   const pathname = usePathname()
@@ -232,6 +234,9 @@ export default function Home() {
         if (data?.processUser) {
           setDefaultOrgName(data.processUser)
         }
+        if (data?.interfaceMode === 'essential' || data?.interfaceMode === 'full') {
+          setInterfaceMode(data.interfaceMode)
+        }
         if (data && data.gateway === false) {
           setDashboardMode('local')
           setGatewayAvailable(false)
@@ -277,15 +282,19 @@ export default function Home() {
       fetch('/api/agents').then(r => r.ok ? r.json() : null),
       fetch('/api/sessions').then(r => r.ok ? r.json() : null),
       fetch('/api/projects').then(r => r.ok ? r.json() : null),
-    ]).then(([agentsData, sessionsData, projectsData]) => {
+      fetch('/api/memory/graph?agent=all').then(r => r.ok ? r.json() : null),
+      fetch('/api/skills').then(r => r.ok ? r.json() : null),
+    ]).then(([agentsData, sessionsData, projectsData, graphData, skillsData]) => {
       if (agentsData?.agents) setAgents(agentsData.agents)
       if (sessionsData?.sessions) setSessions(sessionsData.sessions)
       if (projectsData?.projects) setProjects(projectsData.projects)
+      if (graphData?.agents) setMemoryGraphAgents(graphData.agents)
+      if (skillsData?.skills) setSkillsData(skillsData.skills, skillsData.groups || [], skillsData.total || 0)
     }).catch(() => { /* panels will lazy-load as fallback */ })
       .finally(() => { markStep('workspace') })
 
   // eslint-disable-next-line react-hooks/exhaustive-deps -- boot once on mount, not on every pathname change
-  }, [connect, router, setCurrentUser, setDashboardMode, setGatewayAvailable, setCapabilitiesChecked, setSubscription, setUpdateAvailable, setShowOnboarding, setAgents, setSessions, setProjects])
+  }, [connect, router, setCurrentUser, setDashboardMode, setGatewayAvailable, setCapabilitiesChecked, setSubscription, setUpdateAvailable, setShowOnboarding, setAgents, setSessions, setProjects, setInterfaceMode, setMemoryGraphAgents, setSkillsData])
 
   if (!isClient || !bootComplete) {
     return <Loader variant="page" steps={isClient ? initSteps : undefined} />
@@ -356,9 +365,44 @@ export default function Home() {
   )
 }
 
+const ESSENTIAL_PANELS = new Set([
+  'overview', 'agents', 'tasks', 'chat', 'activity', 'logs', 'settings',
+])
+
 function ContentRouter({ tab }: { tab: string }) {
-  const { dashboardMode } = useMissionControl()
+  const { dashboardMode, interfaceMode, setInterfaceMode } = useMissionControl()
+  const navigateToPanel = useNavigateToPanel()
   const isLocal = dashboardMode === 'local'
+
+  // Guard: show nudge for non-essential panels in essential mode
+  if (interfaceMode === 'essential' && !ESSENTIAL_PANELS.has(tab)) {
+    return (
+      <div className="flex flex-col items-center justify-center py-24 text-center gap-4">
+        <p className="text-sm text-muted-foreground">
+          <span className="font-medium text-foreground capitalize">{tab.replace(/-/g, ' ')}</span> is available in Full mode.
+        </p>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              setInterfaceMode('full')
+              try { await fetch('/api/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ settings: { 'general.interface_mode': 'full' } }) }) } catch {}
+            }}
+          >
+            Switch to Full
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigateToPanel('overview')}
+          >
+            Go to Overview
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   switch (tab) {
     case 'overview':
