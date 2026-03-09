@@ -58,11 +58,10 @@ const SOURCE_LABELS: Record<string, string> = {
 }
 
 export function SkillsPanel() {
-  const { dashboardMode } = useMissionControl()
-  const [loading, setLoading] = useState(true)
+  const { dashboardMode, skillsList, skillGroups, skillsTotal, setSkillsData } = useMissionControl()
+  const [loading, setLoading] = useState(skillsList === null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [data, setData] = useState<SkillsResponse | null>(null)
   const [query, setQuery] = useState('')
   const [selectedSkill, setSelectedSkill] = useState<SkillSummary | null>(null)
   const [selectedContent, setSelectedContent] = useState<SkillContentResponse | null>(null)
@@ -109,11 +108,14 @@ export function SkillsPanel() {
     const res = await fetch('/api/skills', { cache: 'no-store' })
     const body = await res.json()
     if (!res.ok) throw new Error(body?.error || 'Failed to load skills')
-    setData(body as SkillsResponse)
+    const resp = body as SkillsResponse
+    setSkillsData(resp.skills, resp.groups, resp.total)
     if (opts?.initial) setLoading(false)
-  }, [])
+  }, [setSkillsData])
 
   useEffect(() => {
+    // Skip initial fetch if we already have cached data from a previous mount
+    if (skillsList !== null) return
     let cancelled = false
     async function run() {
       try {
@@ -127,7 +129,7 @@ export function SkillsPanel() {
     }
     run()
     return () => { cancelled = true }
-  }, [loadSkills])
+  }, [loadSkills, skillsList])
 
   // Two-way disk sync: poll for external on-disk changes.
   useEffect(() => {
@@ -138,14 +140,14 @@ export function SkillsPanel() {
   }, [loadSkills])
 
   const filtered = useMemo(() => {
-    const list = data?.skills || []
+    const list = skillsList || []
     const q = query.trim().toLowerCase()
     if (!q) return list
     return list.filter((skill) => {
       const haystack = `${skill.name} ${skill.source} ${skill.description || ''}`.toLowerCase()
       return haystack.includes(q)
     })
-  }, [data?.skills, query])
+  }, [skillsList, query])
 
   useEffect(() => {
     if (!selectedSkill) return
@@ -337,7 +339,7 @@ export function SkillsPanel() {
   }
 
   const scanAllSkills = async () => {
-    const skills = data?.skills || []
+    const skills = skillsList || []
     if (skills.length === 0) return
     const state = {
       running: true,
@@ -445,7 +447,7 @@ export function SkillsPanel() {
           </div>
           {query && (
             <div className="text-2xs text-muted-foreground">
-              Showing {filtered.length} of {data?.total || 0} skills matching &quot;{query}&quot;
+              Showing {filtered.length} of {skillsTotal} skills matching &quot;{query}&quot;
             </div>
           )}
 
@@ -536,7 +538,7 @@ export function SkillsPanel() {
           ) : (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-                {(data?.groups || []).filter(g => g.skills.length > 0 || ['user-agents', 'user-codex', 'openclaw'].includes(g.source)).map((group) => (
+                {(skillGroups || []).filter(g => g.skills.length > 0 || ['user-agents', 'user-codex', 'openclaw'].includes(g.source)).map((group) => (
                   <div key={group.source} className={`rounded-lg border bg-card p-3 ${
                     group.source === 'openclaw' ? 'border-cyan-500/30' : 'border-border'
                   }`}>
@@ -549,7 +551,7 @@ export function SkillsPanel() {
 
               <div className="rounded-lg border border-border bg-card overflow-hidden">
                 <div className="px-4 py-3 border-b border-border text-xs text-muted-foreground">
-                  {filtered.length} of {data?.total || 0} skills
+                  {filtered.length} of {skillsTotal} skills
                 </div>
                 {filtered.length === 0 ? (
                   <div className="px-4 py-6 text-sm text-muted-foreground">No skills matched this filter.</div>

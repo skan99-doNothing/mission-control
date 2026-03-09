@@ -128,6 +128,7 @@ export interface Agent {
   role: string
   session_key?: string
   soul_content?: string
+  working_memory?: string
   status: 'offline' | 'idle' | 'busy' | 'error'
   last_seen?: number
   last_activity?: string
@@ -138,6 +139,8 @@ export interface Agent {
     total: number
     assigned: number
     in_progress: number
+    quality_review: number
+    done: number
     completed: number
   }
 }
@@ -530,6 +533,16 @@ interface MissionControlStore {
   addExecApproval: (approval: ExecApprovalRequest) => void
   updateExecApproval: (id: string, updates: Partial<ExecApprovalRequest>) => void
 
+  // Skills (persisted across tab switches)
+  skillsList: { id: string; name: string; source: string; path: string; description?: string; registry_slug?: string | null; security_status?: string | null }[] | null
+  skillGroups: { source: string; path: string; skills: { id: string; name: string; source: string; path: string; description?: string; registry_slug?: string | null; security_status?: string | null }[] }[] | null
+  skillsTotal: number
+  setSkillsData: (skills: { id: string; name: string; source: string; path: string; description?: string; registry_slug?: string | null; security_status?: string | null }[], groups: { source: string; path: string; skills: { id: string; name: string; source: string; path: string; description?: string; registry_slug?: string | null; security_status?: string | null }[] }[], total: number) => void
+
+  // Memory Graph (persisted across tab switches)
+  memoryGraphAgents: { name: string; dbSize: number; totalChunks: number; totalFiles: number; files: { path: string; chunks: number; textSize: number }[] }[] | null
+  setMemoryGraphAgents: (agents: { name: string; dbSize: number; totalChunks: number; totalFiles: number; files: { path: string; chunks: number; textSize: number }[] }[]) => void
+
   // Security Posture
   securityPosture?: { score: number; level: string }
   setSecurityPosture: (posture: { score: number; level: string } | undefined) => void
@@ -831,6 +844,16 @@ export const useMissionControl = create<MissionControlStore>()(
       set((state) => ({
         execApprovals: state.execApprovals.map(a => a.id === id ? { ...a, ...updates } : a),
       })),
+
+    // Skills
+    skillsList: null,
+    skillGroups: null,
+    skillsTotal: 0,
+    setSkillsData: (skills, groups, total) => set({ skillsList: skills, skillGroups: groups, skillsTotal: total }),
+
+    // Memory Graph
+    memoryGraphAgents: null,
+    setMemoryGraphAgents: (agents) => set({ memoryGraphAgents: agents }),
 
     // Security Posture
     securityPosture: undefined,

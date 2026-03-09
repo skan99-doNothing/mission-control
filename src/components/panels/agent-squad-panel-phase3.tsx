@@ -15,31 +15,9 @@ import {
   CreateAgentModal
 } from './agent-detail-tabs'
 import { formatModelName, buildTaskStatParts } from '@/lib/agent-card-helpers'
+import { useMissionControl, type Agent } from '@/store'
 
 const log = createClientLogger('AgentSquadPhase3')
-
-interface Agent {
-  id: number
-  name: string
-  role: string
-  session_key?: string
-  soul_content?: string
-  working_memory?: string
-  status: 'offline' | 'idle' | 'busy' | 'error'
-  last_seen?: number
-  last_activity?: string
-  created_at: number
-  updated_at: number
-  config?: any
-  taskStats?: {
-    total: number
-    assigned: number
-    in_progress: number
-    quality_review: number
-    done: number
-    completed: number
-  }
-}
 
 interface WorkItem {
   type: string
@@ -109,8 +87,8 @@ const statusCardStyles: Record<string, { edge: string; glow: string; dot: string
 }
 
 export function AgentSquadPanelPhase3() {
-  const [agents, setAgents] = useState<Agent[]>([])
-  const [loading, setLoading] = useState(true)
+  const { agents, setAgents } = useMissionControl()
+  const [loading, setLoading] = useState(agents.length === 0)
   const [error, setError] = useState<string | null>(null)
   const [selectedAgent, setSelectedAgent] = useState<Agent | null>(null)
   const [showCreateModal, setShowCreateModal] = useState(false)
@@ -196,12 +174,12 @@ export function AgentSquadPanelPhase3() {
 
       if (!response.ok) throw new Error('Failed to update agent status')
       
-      // Update local state
-      setAgents(prev => prev.map(agent => 
-        agent.name === agentName 
-          ? { 
-              ...agent, 
-              status, 
+      // Update store state
+      setAgents(agents.map(agent =>
+        agent.name === agentName
+          ? {
+              ...agent,
+              status,
               last_activity: activity || `Status changed to ${status}`,
               last_seen: Math.floor(Date.now() / 1000),
               updated_at: Math.floor(Date.now() / 1000)

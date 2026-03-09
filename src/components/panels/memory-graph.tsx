@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { GraphCanvas, GraphCanvasRef, type Theme, type GraphNode as ReagraphNode, type GraphEdge as ReagraphEdge, type InternalGraphNode } from 'reagraph'
 import { Button } from '@/components/ui/button'
+import { useMissionControl } from '@/store'
 
 // --- Data interfaces (match API response) ---
 
@@ -106,9 +107,10 @@ const obsidianTheme: Theme = {
 // --- Component ---
 
 export function MemoryGraph() {
-  const [agents, setAgents] = useState<AgentGraphData[]>([])
+  const { memoryGraphAgents, setMemoryGraphAgents } = useMissionControl()
+  const agents = memoryGraphAgents || []
   const [selectedAgent, setSelectedAgent] = useState<string>('all')
-  const [isLoading, setIsLoading] = useState(true)
+  const [isLoading, setIsLoading] = useState(memoryGraphAgents === null)
   const [error, setError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedFile, setSelectedFile] = useState<AgentFileInfo | null>(null)
@@ -127,17 +129,19 @@ export function MemoryGraph() {
         throw new Error(data.error || `HTTP ${res.status}`)
       }
       const data = await res.json()
-      setAgents(data.agents || [])
+      setMemoryGraphAgents(data.agents || [])
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : 'Failed to load')
     } finally {
       setIsLoading(false)
     }
-  }, [])
+  }, [setMemoryGraphAgents])
 
   useEffect(() => {
+    // Skip fetch if we already have cached data from a previous mount
+    if (memoryGraphAgents !== null) return
     fetchData()
-  }, [fetchData])
+  }, [fetchData, memoryGraphAgents])
 
   // Stats
   const stats = useMemo(() => {

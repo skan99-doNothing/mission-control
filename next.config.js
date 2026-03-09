@@ -17,6 +17,7 @@ const nextConfig = {
       `img-src 'self' data: blob:${googleEnabled ? ' https://*.googleusercontent.com https://lh3.googleusercontent.com' : ''}`,
       `font-src 'self' data:`,
       `frame-src 'self'${googleEnabled ? ' https://accounts.google.com' : ''}`,
+      `worker-src 'self' blob:`,
     ].join('; ')
 
     return [
