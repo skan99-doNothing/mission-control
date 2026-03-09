@@ -34,6 +34,7 @@ interface SystemCapabilities {
 
 const STEPS = [
   { id: 'welcome', title: 'Welcome' },
+  { id: 'interface-mode', title: 'Interface' },
   { id: 'credentials', title: 'Credentials' },
   { id: 'gateway', title: 'Agent Setup' },
   { id: 'security', title: 'Security Scan' },
@@ -48,7 +49,7 @@ function modeColors(isGateway: boolean) {
 }
 
 export function OnboardingWizard() {
-  const { showOnboarding, setShowOnboarding, dashboardMode, gatewayAvailable } = useMissionControl()
+  const { showOnboarding, setShowOnboarding, dashboardMode, gatewayAvailable, interfaceMode, setInterfaceMode } = useMissionControl()
   const navigateToPanel = useNavigateToPanel()
   const [step, setStep] = useState(0)
   const [slideDir, setSlideDir] = useState<'left' | 'right'>('left')
@@ -92,7 +93,7 @@ export function OnboardingWizard() {
   }, [showOnboarding])
 
   useEffect(() => {
-    if (step !== 1 || credentialStatus) return
+    if (step !== 2 || credentialStatus) return
     fetch('/api/diagnostics')
       .then(r => r.ok ? r.json() : null)
       .then(data => {
@@ -141,7 +142,7 @@ export function OnboardingWizard() {
     setSlideDir('left')
     setAnimating(true)
     setTimeout(() => {
-      setStep(s => Math.min(s + 1, 4))
+      setStep(s => Math.min(s + 1, STEPS.length - 1))
       setAnimating(false)
     }, 150)
   }, [step, state, completeStep])
@@ -157,7 +158,7 @@ export function OnboardingWizard() {
 
   if (!showOnboarding || !state) return null
 
-  const totalSteps = 5
+  const totalSteps = STEPS.length
   const isGateway = dashboardMode === 'full' || gatewayAvailable
 
   return (
@@ -204,15 +205,18 @@ export function OnboardingWizard() {
             <StepWelcome isGateway={isGateway} capabilities={capabilities} onNext={goNext} onSkip={skip} />
           )}
           {step === 1 && (
-            <StepCredentials isGateway={isGateway} status={credentialStatus} onNext={goNext} onBack={goBack} navigateToPanel={navigateToPanel} onClose={() => setShowOnboarding(false)} />
+            <StepInterfaceMode isGateway={isGateway} onNext={goNext} onBack={goBack} />
           )}
           {step === 2 && (
-            <StepGateway isGateway={isGateway} capabilities={capabilities} onNext={goNext} onBack={goBack} navigateToPanel={navigateToPanel} onClose={() => setShowOnboarding(false)} />
+            <StepCredentials isGateway={isGateway} status={credentialStatus} onNext={goNext} onBack={goBack} navigateToPanel={navigateToPanel} onClose={() => setShowOnboarding(false)} />
           )}
           {step === 3 && (
-            <StepSecurity isGateway={isGateway} onNext={goNext} onBack={goBack} />
+            <StepGateway isGateway={isGateway} capabilities={capabilities} onNext={goNext} onBack={goBack} navigateToPanel={navigateToPanel} onClose={() => setShowOnboarding(false)} />
           )}
           {step === 4 && (
+            <StepSecurity isGateway={isGateway} onNext={goNext} onBack={goBack} />
+          )}
+          {step === 5 && (
             <StepNextSteps isGateway={isGateway} onFinish={finish} onBack={goBack} navigateToPanel={navigateToPanel} onClose={() => setShowOnboarding(false)} />
           )}
         </div>
@@ -238,8 +242,9 @@ function StepWelcome({ isGateway, capabilities, onNext, onSkip }: {
         <div>
           <h2 className="text-xl font-semibold mb-2">Welcome to Mission Control</h2>
           <p className="text-sm text-muted-foreground max-w-sm">
-            Your open-source hub for managing AI agents and Claude Code sessions.
-            We&apos;ve already scanned your setup — here&apos;s what we found.
+            Your station for AI agents. When agents dock here, they gain persistent memory,
+            task management, coordinated workflows, and full observability.
+            We&apos;ve scanned your setup — here&apos;s what&apos;s online.
           </p>
         </div>
 
@@ -282,12 +287,12 @@ function StepWelcome({ isGateway, capabilities, onNext, onSkip }: {
                 Local Mode
               </p>
               <ul className={`text-2xs space-y-0.5 ${!isGateway ? 'text-muted-foreground' : 'text-muted-foreground/60'}`}>
-                <li>Monitor Claude Code sessions</li>
-                <li>Track token usage &amp; costs</li>
-                <li>Kanban task management</li>
+                <li>Monitor Claude Code sessions on this machine</li>
+                <li>Task tracking and cost monitoring</li>
+                <li>Session history</li>
               </ul>
               {isGateway && (
-                <p className="text-2xs text-muted-foreground/40 mt-1.5 italic">Active without gateway</p>
+                <p className="text-2xs text-muted-foreground/40 mt-1.5 italic">Single-pilot ops</p>
               )}
             </div>
 
@@ -306,12 +311,12 @@ function StepWelcome({ isGateway, capabilities, onNext, onSkip }: {
                 Gateway Mode
               </p>
               <ul className={`text-2xs space-y-0.5 ${isGateway ? 'text-muted-foreground' : 'text-muted-foreground/60'}`}>
-                <li>Orchestrate multiple agents</li>
-                <li>Inter-agent communication</li>
-                <li>Skills marketplace</li>
+                <li>Orchestrate multiple agents across machines</li>
+                <li>Memory, skills, and inter-agent comms</li>
+                <li>Webhook integrations</li>
               </ul>
               {!isGateway && (
-                <p className="text-2xs text-muted-foreground/40 mt-1.5 italic">Available with gateway</p>
+                <p className="text-2xs text-muted-foreground/40 mt-1.5 italic">Requires gateway</p>
               )}
             </div>
           </div>
@@ -338,6 +343,102 @@ function StatusChip({ ok, label }: { ok: boolean; label: string }) {
   )
 }
 
+function StepInterfaceMode({ isGateway, onNext, onBack }: {
+  isGateway: boolean
+  onNext: () => void
+  onBack: () => void
+}) {
+  const mc = modeColors(isGateway)
+  const { interfaceMode, setInterfaceMode } = useMissionControl()
+  const [selected, setSelected] = useState<'essential' | 'full'>(interfaceMode)
+
+  const handleSelect = async (mode: 'essential' | 'full') => {
+    setSelected(mode)
+    setInterfaceMode(mode)
+    try {
+      await fetch('/api/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings: { 'general.interface_mode': mode } }),
+      })
+    } catch {}
+  }
+
+  return (
+    <>
+      <div className="flex-1">
+        <h2 className="text-lg font-semibold mb-1">Choose Your Station Layout</h2>
+        <p className="text-sm text-muted-foreground mb-4">
+          Essential shows the core panels operators need most. Full unlocks every system on the station — memory, automation, security auditing, and more. You can switch anytime.
+        </p>
+
+        <div className="grid grid-cols-2 gap-3">
+          {/* Essential card */}
+          <button
+            onClick={() => handleSelect('essential')}
+            className={`relative p-4 rounded-lg border text-left transition-all ${
+              selected === 'essential'
+                ? `border-void-amber/50 bg-void-amber/5 border-l-2 border-l-void-amber ring-1 ring-void-amber/20`
+                : 'border-border/30 bg-surface-1/30 hover:border-border/50'
+            }`}
+          >
+            {selected === 'essential' && (
+              <span className="absolute -top-2 right-2 text-2xs px-1.5 py-0.5 rounded-full bg-void-amber/20 text-void-amber border border-void-amber/30">
+                Selected
+              </span>
+            )}
+            <p className={`text-sm font-medium mb-2 ${selected === 'essential' ? 'text-void-amber' : 'text-foreground'}`}>
+              Essential
+            </p>
+            <p className="text-xs text-muted-foreground mb-3">
+              Streamlined ops — the panels you&apos;ll use daily: fleet overview, agents, tasks, chat, activity feed, logs, and settings.
+            </p>
+            <ul className="text-2xs text-muted-foreground/70 space-y-0.5">
+              <li>Fleet overview, Agents, Tasks, Chat</li>
+              <li>Activity feed, Logs, Settings</li>
+              <li>7 panels total</li>
+            </ul>
+          </button>
+
+          {/* Full card */}
+          <button
+            onClick={() => handleSelect('full')}
+            className={`relative p-4 rounded-lg border text-left transition-all ${
+              selected === 'full'
+                ? `border-void-cyan/50 bg-void-cyan/5 border-l-2 border-l-void-cyan ring-1 ring-void-cyan/20`
+                : 'border-border/30 bg-surface-1/30 hover:border-border/50'
+            }`}
+          >
+            {selected === 'full' && (
+              <span className="absolute -top-2 right-2 text-2xs px-1.5 py-0.5 rounded-full bg-void-cyan/20 text-void-cyan border border-void-cyan/30">
+                Selected
+              </span>
+            )}
+            <p className={`text-sm font-medium mb-2 ${selected === 'full' ? 'text-void-cyan' : 'text-foreground'}`}>
+              Full
+            </p>
+            <p className="text-xs text-muted-foreground mb-3">
+              Full station access — adds memory browser, cron scheduling, webhooks, alerts, security audit, cost tracking, and gateway config.
+            </p>
+            <ul className="text-2xs text-muted-foreground/70 space-y-0.5">
+              <li>Everything in Essential plus</li>
+              <li>Memory, Cron, Webhooks, Audit</li>
+              <li>All station systems unlocked</li>
+            </ul>
+          </button>
+        </div>
+      </div>
+
+      <div className="flex items-center justify-between pt-4 border-t border-border/30">
+        <Button variant="ghost" size="sm" onClick={onBack} className="text-xs text-muted-foreground">Back</Button>
+        <Button onClick={onNext} size="sm" className={`${mc.bgBtn} ${mc.text} border ${mc.border} ${mc.hoverBg}`}>
+          Continue
+        </Button>
+      </div>
+    </>
+  )
+}
+
 function StepCredentials({
   isGateway,
   status,
@@ -359,10 +460,10 @@ function StepCredentials({
   return (
     <>
       <div className="flex-1">
-        <h2 className="text-lg font-semibold mb-1">Credentials Check</h2>
+        <h2 className="text-lg font-semibold mb-1">Secure Your Station</h2>
         <p className="text-sm text-muted-foreground mb-4">
-          Both you and your agents need secure credentials. The admin password protects the dashboard,
-          while the API key (X-Api-Key header) lets agents self-register and communicate with Mission Control.
+          The admin password protects your station console. The API key is a docking credential —
+          agents present it when they register, so only authorized agents can dock.
         </p>
 
         {!status ? (
@@ -391,8 +492,8 @@ function StepCredentials({
                 <p className="text-sm font-medium">API Key</p>
                 <p className="text-xs text-muted-foreground">
                   {status.apiKeyOk
-                    ? 'API key is configured — agents can self-register via X-Api-Key header'
-                    : 'API key is not set. Agents won\'t be able to self-register without a configured API key. Run: bash scripts/generate-env.sh --force'}
+                    ? 'Configured — agents can dock using this key'
+                    : 'Not set — agents won\'t be able to dock without a configured key. Run: bash scripts/generate-env.sh --force'}
                 </p>
               </div>
             </div>
@@ -441,11 +542,11 @@ function StepGateway({
   return (
     <>
       <div className="flex-1">
-        <h2 className="text-lg font-semibold mb-1">Your Platform Features</h2>
+        <h2 className="text-lg font-semibold mb-1">What Agents Get When They Dock</h2>
         <p className="text-sm text-muted-foreground mb-4">
           {isGateway
-            ? 'Gateway connected — full feature set unlocked. Both local and gateway features are active.'
-            : 'Local mode detected — monitoring features are active. Connect a gateway to unlock orchestration.'}
+            ? 'Gateway online — full station capabilities active. Agents docking here get the complete feature set.'
+            : 'Solo station — monitoring is active. Connect a gateway to unlock multi-agent orchestration.'}
         </p>
 
         <div className="grid grid-cols-2 gap-3">
@@ -461,15 +562,14 @@ function StepGateway({
               </span>
             )}
             <p className={`text-xs font-medium ${!isGateway ? 'text-void-amber' : 'text-muted-foreground'}`}>
-              Local Features
+              Solo Station
             </p>
             <ul className={`text-2xs space-y-1 ${!isGateway ? 'text-muted-foreground' : 'text-muted-foreground/60'}`}>
-              <li>Session monitoring — watch Claude Code in real-time</li>
-              <li>Task board — kanban-style work management</li>
-              <li>Cost tracking — token usage and spend per session</li>
-              <li>Session history — full log of past sessions</li>
-              <li>Security scanning — audit your installation</li>
-              <li>Diagnostics — health checks and system info</li>
+              <li>Session telemetry — agents report token usage and cost in real-time</li>
+              <li>Task board — assign and track work items</li>
+              <li>Session history — full activity log</li>
+              <li>Security scanning — audit your station</li>
+              <li>Diagnostics — system health</li>
             </ul>
           </div>
 
@@ -490,15 +590,14 @@ function StepGateway({
               </span>
             )}
             <p className={`text-xs font-medium ${isGateway ? 'text-void-cyan' : 'text-muted-foreground'}`}>
-              Gateway Features
+              Fleet Station
             </p>
             <ul className={`text-2xs space-y-1 ${isGateway ? 'text-muted-foreground' : 'text-muted-foreground/60'}`}>
-              <li>Agent orchestration — multi-agent coordination</li>
-              <li>Soul/personality — configure agent identity</li>
-              <li>Working memory — persistent agent context</li>
-              <li>Skills marketplace — extend capabilities</li>
-              <li>Wake/delegate — trigger agents on demand</li>
-              <li>Webhooks — outbound event notifications</li>
+              <li>Agent coordination — route tasks between docked agents</li>
+              <li>Persistent memory — agents retain context across sessions</li>
+              <li>Skills library — extend agent capabilities on demand</li>
+              <li>Inter-agent chat — agents communicate directly</li>
+              <li>Webhooks — trigger external systems on agent events</li>
             </ul>
           </div>
         </div>
@@ -511,7 +610,7 @@ function StepGateway({
               className="text-xs border-void-cyan/30 text-void-cyan hover:bg-void-cyan/10"
               onClick={() => { onClose(); navigateToPanel('agents') }}
             >
-              Register your first agent
+              Dock your first agent
             </Button>
           )}
           {!isGateway && (
@@ -527,7 +626,7 @@ function StepGateway({
                 }
               }}
             >
-              {capabilities.claudeSessions > 0 ? 'View active sessions' : 'Configure Gateway'}
+              {capabilities.claudeSessions > 0 ? 'View active sessions' : 'Set up fleet gateway'}
             </Button>
           )}
         </div>
@@ -549,9 +648,9 @@ function StepSecurity({ isGateway, onNext, onBack }: { isGateway: boolean; onNex
   return (
     <>
       <div className="flex-1 overflow-y-auto">
-        <h2 className="text-lg font-semibold mb-1">Security Scan</h2>
+        <h2 className="text-lg font-semibold mb-1">Station Security Sweep</h2>
         <p className="text-sm text-muted-foreground mb-3">
-          Since agents operate autonomously, security matters more than usual. This scan checks five areas:
+          Docked agents run autonomously — a compromised station means compromised agents. This scan checks five systems:
         </p>
         <div className="flex flex-wrap gap-1.5 mb-3">
           {['Credentials', 'Network', 'OpenClaw config', 'Runtime', 'OS hardening'].map(area => (
@@ -588,22 +687,22 @@ function StepNextSteps({
   const goTo = (panel: string) => { onClose(); navigateToPanel(panel) }
 
   const primaryAction = isGateway
-    ? { label: 'Register your first agent', panel: 'agents', desc: 'Add agents through the dashboard or let them self-register via POST /api/agents with your API key' }
-    : { label: 'View Claude sessions', panel: 'claude', desc: 'See active Claude Code sessions, their output, token usage, and cost in real-time' }
+    ? { label: 'Dock your first agent', panel: 'agents', desc: 'Register agents through the console or let them self-dock via POST /api/agents with your docking key' }
+    : { label: 'View docked sessions', panel: 'claude', desc: 'See active Claude Code sessions, their output, token usage, and cost in real-time' }
 
   const secondaryActions = [
     { label: 'Explore the task board', panel: 'tasks', desc: 'Kanban board to create, assign, and track work items across your agents and team' },
-    { label: 'Browse the skills hub', panel: 'skills', desc: 'Install pre-built skills that extend what your agents can do — from code review to deployment' },
+    { label: 'Browse the skills hangar', panel: 'skills', desc: 'Pre-built capabilities your agents gain on install' },
     { label: 'Configure webhooks', panel: 'webhooks', desc: 'Set up outbound HTTP notifications for agent events — completions, errors, and status changes' },
-    { label: 'Review settings', panel: 'settings', desc: 'Manage data retention, scheduled backups, security policies, and system configuration' },
+    { label: 'Configure station settings', panel: 'settings', desc: 'Manage data retention, scheduled backups, security policies, and system configuration' },
   ]
 
   return (
     <>
       <div className="flex-1">
-        <h2 className="text-lg font-semibold mb-1">You&apos;re All Set</h2>
+        <h2 className="text-lg font-semibold mb-1">Station Online</h2>
         <p className="text-sm text-muted-foreground mb-4">
-          Your station is ready. Pick where you&apos;d like to start — you can always reach everything from the sidebar.
+          Your station is ready for agents. Dock your first agent, or explore the systems below.
         </p>
 
         <div className="space-y-2">
@@ -636,8 +735,8 @@ function StepNextSteps({
         </div>
 
         <p className="text-xs text-muted-foreground/60 mt-3 p-2 rounded-lg bg-surface-1/30 border border-border/20">
-          Tip: Agents can self-register via POST /api/agents using the X-Api-Key header.
-          Share the key with teammates so their agents can join your workspace automatically.
+          Tip: Agents self-dock via POST /api/agents using the X-Api-Key header.
+          Share the docking key with teammates so their agents can join your station automatically.
         </p>
       </div>
 
