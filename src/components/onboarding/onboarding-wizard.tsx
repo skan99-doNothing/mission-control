@@ -293,8 +293,8 @@ function StepWelcome({ isGateway, capabilities, onNext, onSkip }: {
               ok={capabilities.dashboardRegistration.registered || capabilities.dashboardRegistration.alreadySet}
               label={
                 (capabilities.dashboardRegistration.registered || capabilities.dashboardRegistration.alreadySet)
-                  ? 'Default dashboard: Mission Control'
-                  : 'Dashboard registration pending'
+                  ? 'Gateway: Mission Control registered'
+                  : 'Gateway registration pending'
               }
             />
           )}
@@ -500,8 +500,8 @@ function StepGatewayLink({ isGateway, registration, onNext, onBack }: {
       <div className="flex-1">
         <h2 className="text-lg font-semibold mb-1">Gateway Link</h2>
         <p className="text-sm text-muted-foreground mb-4">
-          Mission Control registers itself as the default dashboard for your OpenClaw gateway.
-          When you run <code className="text-xs bg-surface-1 px-1 py-0.5 rounded">openclaw dashboard</code>, it will open Mission Control.
+          Mission Control registers its origin with the OpenClaw gateway so it can connect
+          via WebSocket and manage agents remotely.
         </p>
 
         <div className="space-y-3">
@@ -512,11 +512,11 @@ function StepGatewayLink({ isGateway, registration, onNext, onBack }: {
               [{configured ? '+' : '~'}]
             </span>
             <div>
-              <p className="text-sm font-medium">Dashboard URL</p>
+              <p className="text-sm font-medium">Gateway origin registered</p>
               <p className="text-xs text-muted-foreground">
                 {configured
-                  ? 'Configured — openclaw.json updated with Mission Control URL'
-                  : 'Registration pending — will be written on next capabilities check'}
+                  ? 'Mission Control origin added to gateway allowedOrigins'
+                  : 'Registration pending — will be configured on next capabilities check'}
               </p>
             </div>
           </div>
@@ -528,11 +528,11 @@ function StepGatewayLink({ isGateway, registration, onNext, onBack }: {
               [{configured ? '+' : '-'}]
             </span>
             <div>
-              <p className="text-sm font-medium">Allowed Origins</p>
+              <p className="text-sm font-medium">Device auth configured</p>
               <p className="text-xs text-muted-foreground">
                 {configured
-                  ? 'Mission Control origin added to gateway allowedOrigins'
-                  : 'Will be configured alongside dashboard URL'}
+                  ? 'Device auth disabled — MC authenticates via gateway token'
+                  : 'Will be configured alongside origin registration'}
               </p>
             </div>
           </div>

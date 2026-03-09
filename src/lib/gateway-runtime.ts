@@ -9,7 +9,6 @@ interface OpenClawGatewayConfig {
     }
     port?: number
     controlUi?: {
-      dashboardUrl?: string
       allowedOrigins?: string[]
     }
   }
@@ -40,45 +39,28 @@ export function registerMcAsDashboard(mcUrl: string): { registered: boolean; alr
     if (!parsed.gateway) parsed.gateway = {}
     if (!parsed.gateway.controlUi) parsed.gateway.controlUi = {}
 
-    const currentUrl = parsed.gateway.controlUi.dashboardUrl
     const origin = new URL(mcUrl).origin
+    const origins: string[] = parsed.gateway.controlUi.allowedOrigins || []
+    const alreadyInOrigins = origins.includes(origin)
+    const deviceAuthAlreadyDisabled = parsed.gateway.controlUi.dangerouslyDisableDeviceAuth === true
 
-    // Check if already configured correctly
-    if (currentUrl === mcUrl) {
-      // Still ensure origin is in allowedOrigins and device auth is disabled
-      const origins: string[] = parsed.gateway.controlUi.allowedOrigins || []
-      let needsWrite = false
-      if (!origins.includes(origin)) {
-        origins.push(origin)
-        parsed.gateway.controlUi.allowedOrigins = origins
-        needsWrite = true
-      }
-      if (parsed.gateway.controlUi.dangerouslyDisableDeviceAuth !== true) {
-        parsed.gateway.controlUi.dangerouslyDisableDeviceAuth = true
-        needsWrite = true
-      }
-      if (needsWrite) {
-        fs.writeFileSync(configPath, JSON.stringify(parsed, null, 2) + '\n')
-        logger.info({ origin }, 'Updated MC gateway config (origins/device-auth)')
-      }
+    if (alreadyInOrigins && deviceAuthAlreadyDisabled) {
       return { registered: false, alreadySet: true }
     }
 
-    // Write dashboardUrl, ensure allowedOrigins, and disable device auth
+    // Add MC origin to allowedOrigins and disable device auth
     // (MC authenticates via gateway token — device pairing is unnecessary)
-    parsed.gateway.controlUi.dashboardUrl = mcUrl
-    parsed.gateway.controlUi.dangerouslyDisableDeviceAuth = true
-    const origins: string[] = parsed.gateway.controlUi.allowedOrigins || []
-    if (!origins.includes(origin)) {
+    if (!alreadyInOrigins) {
       origins.push(origin)
+      parsed.gateway.controlUi.allowedOrigins = origins
     }
-    parsed.gateway.controlUi.allowedOrigins = origins
+    parsed.gateway.controlUi.dangerouslyDisableDeviceAuth = true
 
     fs.writeFileSync(configPath, JSON.stringify(parsed, null, 2) + '\n')
-    logger.info({ mcUrl, origin }, 'Registered MC as default dashboard')
+    logger.info({ origin }, 'Registered MC origin in gateway config')
     return { registered: true, alreadySet: false }
   } catch (err) {
-    logger.error({ err }, 'Failed to register MC as dashboard')
+    logger.error({ err }, 'Failed to register MC in gateway config')
     return { registered: false, alreadySet: false }
   }
 }
