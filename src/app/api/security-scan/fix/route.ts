@@ -7,12 +7,14 @@ import { requireRole } from '@/lib/auth'
 import { config } from '@/lib/config'
 import { getDatabase } from '@/lib/db'
 import { logger } from '@/lib/logger'
+import { FIX_SAFETY, type FixSafety } from '@/lib/security-scan'
 
-interface FixResult {
+export interface FixResult {
   id: string
   name: string
   fixed: boolean
   detail: string
+  fixSafety?: FixSafety
 }
 
 export async function POST(request: NextRequest) {
@@ -55,12 +57,12 @@ export async function POST(request: NextRequest) {
       const mode = (stat.mode & 0o777).toString(8)
       if (mode !== '600') {
         chmodSync(envPath, 0o600)
-        results.push({ id: 'env_permissions', name: '.env file permissions', fixed: true, detail: `Changed from ${mode} to 600` })
+        results.push({ id: 'env_permissions', name: '.env file permissions', fixed: true, detail: `Changed from ${mode} to 600`, fixSafety: FIX_SAFETY['env_permissions'] })
       } else {
-        results.push({ id: 'env_permissions', name: '.env file permissions', fixed: true, detail: 'Already 600' })
+        results.push({ id: 'env_permissions', name: '.env file permissions', fixed: true, detail: 'Already 600', fixSafety: FIX_SAFETY['env_permissions'] })
       }
     } catch (e: any) {
-      results.push({ id: 'env_permissions', name: '.env file permissions', fixed: false, detail: e.message })
+      results.push({ id: 'env_permissions', name: '.env file permissions', fixed: false, detail: e.message, fixSafety: FIX_SAFETY['env_permissions'] })
     }
   }
 
@@ -75,9 +77,9 @@ export async function POST(request: NextRequest) {
         writeFileSync(envPath, content, 'utf-8')
       }
       setEnvVar('MC_ALLOWED_HOSTS', 'localhost,127.0.0.1')
-      results.push({ id: 'allowed_hosts', name: 'Host allowlist', fixed: true, detail: 'Set MC_ALLOWED_HOSTS=localhost,127.0.0.1' })
+      results.push({ id: 'allowed_hosts', name: 'Host allowlist', fixed: true, detail: 'Set MC_ALLOWED_HOSTS=localhost,127.0.0.1', fixSafety: FIX_SAFETY['allowed_hosts'] })
     } catch (e: any) {
-      results.push({ id: 'allowed_hosts', name: 'Host allowlist', fixed: false, detail: e.message })
+      results.push({ id: 'allowed_hosts', name: 'Host allowlist', fixed: false, detail: e.message, fixSafety: FIX_SAFETY['allowed_hosts'] })
     }
   }
 
@@ -85,9 +87,9 @@ export async function POST(request: NextRequest) {
   if (shouldFix('hsts_enabled') && process.env.MC_ENABLE_HSTS !== '1') {
     try {
       setEnvVar('MC_ENABLE_HSTS', '1')
-      results.push({ id: 'hsts_enabled', name: 'HSTS enabled', fixed: true, detail: 'Set MC_ENABLE_HSTS=1' })
+      results.push({ id: 'hsts_enabled', name: 'HSTS enabled', fixed: true, detail: 'Set MC_ENABLE_HSTS=1', fixSafety: FIX_SAFETY['hsts_enabled'] })
     } catch (e: any) {
-      results.push({ id: 'hsts_enabled', name: 'HSTS', fixed: false, detail: e.message })
+      results.push({ id: 'hsts_enabled', name: 'HSTS', fixed: false, detail: e.message, fixSafety: FIX_SAFETY['hsts_enabled'] })
     }
   }
 
@@ -96,9 +98,9 @@ export async function POST(request: NextRequest) {
   if (shouldFix('cookie_secure') && cookieSecure !== '1' && cookieSecure !== 'true') {
     try {
       setEnvVar('MC_COOKIE_SECURE', '1')
-      results.push({ id: 'cookie_secure', name: 'Secure cookies', fixed: true, detail: 'Set MC_COOKIE_SECURE=1' })
+      results.push({ id: 'cookie_secure', name: 'Secure cookies', fixed: true, detail: 'Set MC_COOKIE_SECURE=1', fixSafety: FIX_SAFETY['cookie_secure'] })
     } catch (e: any) {
-      results.push({ id: 'cookie_secure', name: 'Secure cookies', fixed: false, detail: e.message })
+      results.push({ id: 'cookie_secure', name: 'Secure cookies', fixed: false, detail: e.message, fixSafety: FIX_SAFETY['cookie_secure'] })
     }
   }
 
@@ -108,9 +110,9 @@ export async function POST(request: NextRequest) {
     try {
       const newKey = crypto.randomBytes(32).toString('hex')
       setEnvVar('API_KEY', newKey)
-      results.push({ id: 'api_key_set', name: 'API key', fixed: true, detail: 'Generated new random API key' })
+      results.push({ id: 'api_key_set', name: 'API key', fixed: true, detail: 'Generated new random API key', fixSafety: FIX_SAFETY['api_key_set'] })
     } catch (e: any) {
-      results.push({ id: 'api_key_set', name: 'API key', fixed: false, detail: e.message })
+      results.push({ id: 'api_key_set', name: 'API key', fixed: false, detail: e.message, fixSafety: FIX_SAFETY['api_key_set'] })
     }
   }
 
@@ -132,10 +134,10 @@ export async function POST(request: NextRequest) {
         const mode = (stat.mode & 0o777).toString(8)
         if (mode !== '600') {
           chmodSync(configPath, 0o600)
-          results.push({ id: 'config_permissions', name: 'OpenClaw config permissions', fixed: true, detail: `Changed from ${mode} to 600` })
+          results.push({ id: 'config_permissions', name: 'OpenClaw config permissions', fixed: true, detail: `Changed from ${mode} to 600`, fixSafety: FIX_SAFETY['config_permissions'] })
         }
       } catch (e: any) {
-        results.push({ id: 'config_permissions', name: 'OpenClaw config permissions', fixed: false, detail: e.message })
+        results.push({ id: 'config_permissions', name: 'OpenClaw config permissions', fixed: false, detail: e.message, fixSafety: FIX_SAFETY['config_permissions'] })
       }
 
       // Fix gateway auth
@@ -148,7 +150,7 @@ export async function POST(request: NextRequest) {
             ocConfig.gateway.auth.token = crypto.randomBytes(32).toString('hex')
           }
           configChanged = true
-          results.push({ id: 'gateway_auth', name: 'Gateway authentication', fixed: true, detail: 'Set auth.mode to "token" with generated token' })
+          results.push({ id: 'gateway_auth', name: 'Gateway authentication', fixed: true, detail: 'Set auth.mode to "token" with generated token', fixSafety: FIX_SAFETY['gateway_auth'] })
         }
       }
 
@@ -158,7 +160,7 @@ export async function POST(request: NextRequest) {
         if (ocConfig.gateway.bind !== 'loopback' && ocConfig.gateway.bind !== '127.0.0.1') {
           ocConfig.gateway.bind = 'loopback'
           configChanged = true
-          results.push({ id: 'gateway_bind', name: 'Gateway bind address', fixed: true, detail: 'Set bind to "loopback"' })
+          results.push({ id: 'gateway_bind', name: 'Gateway bind address', fixed: true, detail: 'Set bind to "loopback"', fixSafety: FIX_SAFETY['gateway_bind'] })
         }
       }
 
@@ -168,7 +170,7 @@ export async function POST(request: NextRequest) {
         if (ocConfig.elevated.enabled === true) {
           ocConfig.elevated.enabled = false
           configChanged = true
-          results.push({ id: 'elevated_disabled', name: 'Elevated mode', fixed: true, detail: 'Disabled elevated mode' })
+          results.push({ id: 'elevated_disabled', name: 'Elevated mode', fixed: true, detail: 'Disabled elevated mode', fixSafety: FIX_SAFETY['elevated_disabled'] })
         }
       }
 
@@ -178,7 +180,7 @@ export async function POST(request: NextRequest) {
         if (ocConfig.session.dmScope !== 'per-channel-peer') {
           ocConfig.session.dmScope = 'per-channel-peer'
           configChanged = true
-          results.push({ id: 'dm_isolation', name: 'DM session isolation', fixed: true, detail: 'Set dmScope to "per-channel-peer"' })
+          results.push({ id: 'dm_isolation', name: 'DM session isolation', fixed: true, detail: 'Set dmScope to "per-channel-peer"', fixSafety: FIX_SAFETY['dm_isolation'] })
         }
       }
 
@@ -189,7 +191,7 @@ export async function POST(request: NextRequest) {
         if (ocConfig.tools.exec.security !== 'sandbox' && ocConfig.tools.exec.security !== 'deny') {
           ocConfig.tools.exec.security = 'sandbox'
           configChanged = true
-          results.push({ id: 'exec_restricted', name: 'Exec tool restriction', fixed: true, detail: 'Set exec security to "sandbox"' })
+          results.push({ id: 'exec_restricted', name: 'Exec tool restriction', fixed: true, detail: 'Set exec security to "sandbox"', fixSafety: FIX_SAFETY['exec_restricted'] })
         }
       }
 
@@ -198,7 +200,7 @@ export async function POST(request: NextRequest) {
         if (ocConfig.gateway?.controlUi?.dangerouslyDisableDeviceAuth === true) {
           ocConfig.gateway.controlUi.dangerouslyDisableDeviceAuth = false
           configChanged = true
-          results.push({ id: 'control_ui_device_auth', name: 'Control UI device auth', fixed: true, detail: 'Disabled dangerouslyDisableDeviceAuth' })
+          results.push({ id: 'control_ui_device_auth', name: 'Control UI device auth', fixed: true, detail: 'Disabled dangerouslyDisableDeviceAuth', fixSafety: FIX_SAFETY['control_ui_device_auth'] })
         }
       }
 
@@ -207,7 +209,7 @@ export async function POST(request: NextRequest) {
         if (ocConfig.gateway?.controlUi?.allowInsecureAuth === true) {
           ocConfig.gateway.controlUi.allowInsecureAuth = false
           configChanged = true
-          results.push({ id: 'control_ui_insecure_auth', name: 'Control UI secure auth', fixed: true, detail: 'Disabled allowInsecureAuth' })
+          results.push({ id: 'control_ui_insecure_auth', name: 'Control UI secure auth', fixed: true, detail: 'Disabled allowInsecureAuth', fixSafety: FIX_SAFETY['control_ui_insecure_auth'] })
         }
       }
 
@@ -218,7 +220,7 @@ export async function POST(request: NextRequest) {
         if (ocConfig.tools.fs.workspaceOnly !== true) {
           ocConfig.tools.fs.workspaceOnly = true
           configChanged = true
-          results.push({ id: 'fs_workspace_only', name: 'Filesystem workspace isolation', fixed: true, detail: 'Set tools.fs.workspaceOnly to true' })
+          results.push({ id: 'fs_workspace_only', name: 'Filesystem workspace isolation', fixed: true, detail: 'Set tools.fs.workspaceOnly to true', fixSafety: FIX_SAFETY['fs_workspace_only'] })
         }
       }
 
@@ -228,7 +230,7 @@ export async function POST(request: NextRequest) {
         if (!ocConfig.logging.redactSensitive) {
           ocConfig.logging.redactSensitive = 'tools'
           configChanged = true
-          results.push({ id: 'log_redaction', name: 'Log redaction', fixed: true, detail: 'Set logging.redactSensitive to "tools"' })
+          results.push({ id: 'log_redaction', name: 'Log redaction', fixed: true, detail: 'Set logging.redactSensitive to "tools"', fixSafety: FIX_SAFETY['log_redaction'] })
         }
       }
 
@@ -255,7 +257,7 @@ export async function POST(request: NextRequest) {
         try { chmodSync(f, 0o755); fixedCount++ } catch { /* skip */ }
       }
       if (fixedCount > 0) {
-        results.push({ id: 'world_writable', name: 'World-writable files', fixed: true, detail: `Fixed permissions on ${fixedCount} file(s)` })
+        results.push({ id: 'world_writable', name: 'World-writable files', fixed: true, detail: `Fixed permissions on ${fixedCount} file(s)`, fixSafety: FIX_SAFETY['world_writable'] })
       }
     }
   } catch { /* no world-writable files or find not available */ }

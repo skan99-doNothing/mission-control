@@ -46,6 +46,36 @@ const SECRET_PATTERNS: SecretPattern[] = [
 
   // Database connection strings
   { type: 'db_connection_string', severity: 'critical', regex: /(?:postgres|postgresql|mysql|mongodb|mongodb\+srv|redis):\/\/[^\s'"]{10,}/gi },
+
+  // Slack webhooks
+  { type: 'slack_webhook', severity: 'critical', regex: /https:\/\/hooks\.slack\.com\/services\/T[A-Z0-9]{8,}\/B[A-Z0-9]{8,}\/[A-Za-z0-9]{20,}/g },
+
+  // Discord webhooks
+  { type: 'discord_webhook', severity: 'critical', regex: /https:\/\/discord(?:app)?\.com\/api\/webhooks\/\d{17,}\/[A-Za-z0-9_\-]{60,}/g },
+
+  // OpenAI API keys
+  { type: 'openai_api_key', severity: 'critical', regex: /sk-[A-Za-z0-9]{20}T3BlbkFJ[A-Za-z0-9]{20}/g },
+
+  // Anthropic API keys
+  { type: 'anthropic_api_key', severity: 'critical', regex: /sk-ant-api[A-Za-z0-9\-_]{20,}/g },
+
+  // Twilio API keys
+  { type: 'twilio_api_key', severity: 'critical', regex: /SK[0-9a-fA-F]{32}/g },
+
+  // SendGrid API keys
+  { type: 'sendgrid_api_key', severity: 'critical', regex: /SG\.[A-Za-z0-9_\-]{22}\.[A-Za-z0-9_\-]{43}/g },
+
+  // Mailgun API keys
+  { type: 'mailgun_api_key', severity: 'critical', regex: /key-[0-9a-zA-Z]{32}/g },
+
+  // GCP service account key indicator
+  { type: 'gcp_service_account', severity: 'critical', regex: /"type"\s*:\s*"service_account"[^}]*"private_key"/g },
+
+  // Azure storage connection strings
+  { type: 'azure_storage', severity: 'critical', regex: /DefaultEndpointsProtocol=https?;AccountName=[^;]+;AccountKey=[A-Za-z0-9+/=]{20,}/g },
+
+  // SSH private key content (full PEM block)
+  { type: 'ssh_private_key_content', severity: 'critical', regex: /-----BEGIN\s(?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]{20,}?-----END\s(?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----/g },
 ]
 
 export function scanForSecrets(text: string): SecretMatch[] {

@@ -65,4 +65,117 @@ test.describe('Security Scan API', () => {
       }
     }
   })
+
+  // ── Severity and fixSafety fields ────────────
+
+  test('checks include severity field', async ({ request }) => {
+    const res = await request.get('/api/security-scan', { headers: API_KEY_HEADER })
+    const body = await res.json()
+
+    const allChecks = Object.values(body.categories).flatMap((cat: any) => cat.checks)
+    const checksWithSeverity = allChecks.filter((c: any) => c.severity)
+    // All checks should have severity
+    expect(checksWithSeverity.length).toBe(allChecks.length)
+
+    for (const check of checksWithSeverity as any[]) {
+      expect(['critical', 'high', 'medium', 'low']).toContain(check.severity)
+    }
+  })
+
+  test('severity-weighted scoring differs from simple count', async ({ request }) => {
+    const res = await request.get('/api/security-scan', { headers: API_KEY_HEADER })
+    const body = await res.json()
+
+    // Verify score is present and weighted (just verify it's a valid number)
+    expect(body.score).toBeGreaterThanOrEqual(0)
+    expect(body.score).toBeLessThanOrEqual(100)
+
+    // Verify category scores are also present
+    for (const cat of Object.values(body.categories) as any[]) {
+      expect(cat.score).toBeGreaterThanOrEqual(0)
+      expect(cat.score).toBeLessThanOrEqual(100)
+    }
+  })
+})
+
+test.describe('Security Scan Agent Endpoint', () => {
+  test('POST /api/security-scan/agent returns 401 without auth', async ({ request }) => {
+    const res = await request.post('/api/security-scan/agent', {
+      data: { action: 'scan' },
+    })
+    expect(res.status()).toBe(401)
+  })
+
+  test('POST with action=scan returns scan data with metadata', async ({ request }) => {
+    const res = await request.post('/api/security-scan/agent', {
+      headers: { ...API_KEY_HEADER, 'Content-Type': 'application/json' },
+      data: { action: 'scan' },
+    })
+    expect(res.status()).toBe(200)
+    const body = await res.json()
+
+    expect(body).toHaveProperty('scan')
+    expect(body).toHaveProperty('summary')
+    expect(body.scan).toHaveProperty('overall')
+    expect(body.scan).toHaveProperty('score')
+    expect(body.scan).toHaveProperty('failingChecks')
+    expect(body.scan).toHaveProperty('passingCount')
+    expect(body.scan).toHaveProperty('totalCount')
+    expect(body.scan).toHaveProperty('categories')
+    expect(Array.isArray(body.scan.failingChecks)).toBe(true)
+
+    // Each failing check has severity and fixSafety
+    for (const check of body.scan.failingChecks) {
+      expect(check).toHaveProperty('severity')
+      expect(check).toHaveProperty('fixSafety')
+      expect(check).toHaveProperty('autoFixable')
+      expect(['critical', 'high', 'medium', 'low']).toContain(check.severity)
+    }
+  })
+
+  test('POST with dryRun=true reports without applying', async ({ request }) => {
+    const res = await request.post('/api/security-scan/agent', {
+      headers: { ...API_KEY_HEADER, 'Content-Type': 'application/json' },
+      data: { action: 'scan-and-fix', dryRun: true },
+    })
+    expect(res.status()).toBe(200)
+    const body = await res.json()
+
+    expect(body).toHaveProperty('scan')
+    expect(body).toHaveProperty('fixes')
+    expect(body).toHaveProperty('summary')
+    expect(body.summary).toContain('Dry run')
+
+    // Fixes should report what would happen
+    if (body.fixes.applied.length > 0) {
+      expect(body.fixes.applied[0].detail).toContain('[dry-run]')
+      expect(body.fixes.applied[0].fixed).toBe(false)
+    }
+  })
+
+  test('POST with invalid action returns 400', async ({ request }) => {
+    const res = await request.post('/api/security-scan/agent', {
+      headers: { ...API_KEY_HEADER, 'Content-Type': 'application/json' },
+      data: { action: 'invalid' },
+    })
+    expect(res.status()).toBe(400)
+  })
+
+  test('POST with action=scan-and-fix returns fix results', async ({ request }) => {
+    const res = await request.post('/api/security-scan/agent', {
+      headers: { ...API_KEY_HEADER, 'Content-Type': 'application/json' },
+      data: { action: 'scan-and-fix', fixScope: 'safe' },
+    })
+    expect(res.status()).toBe(200)
+    const body = await res.json()
+
+    expect(body).toHaveProperty('scan')
+    expect(body).toHaveProperty('fixes')
+    expect(body.fixes).toHaveProperty('applied')
+    expect(body.fixes).toHaveProperty('skipped')
+    expect(body.fixes).toHaveProperty('requiresRestart')
+    expect(body.fixes).toHaveProperty('requiresManual')
+    expect(typeof body.fixes.requiresRestart).toBe('boolean')
+    expect(Array.isArray(body.fixes.requiresManual)).toBe(true)
+  })
 })

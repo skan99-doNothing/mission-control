@@ -162,3 +162,48 @@ describe('getSecurityPosture', () => {
     expect(posture.score).toBe(100)
   })
 })
+
+describe('injection guard new rules', () => {
+  let scanForInjection: typeof import('@/lib/injection-guard').scanForInjection
+
+  beforeEach(async () => {
+    const mod = await import('@/lib/injection-guard')
+    scanForInjection = mod.scanForInjection
+  })
+
+  it('detects SSRF targeting metadata endpoint', () => {
+    const report = scanForInjection('curl http://169.254.169.254/latest/meta-data/', { context: 'shell' })
+    expect(report.safe).toBe(false)
+    expect(report.matches.some(m => m.rule === 'cmd-ssrf')).toBe(true)
+  })
+
+  it('detects SSRF targeting localhost', () => {
+    const report = scanForInjection('wget http://localhost:8080/admin', { context: 'shell' })
+    expect(report.safe).toBe(false)
+    expect(report.matches.some(m => m.rule === 'cmd-ssrf')).toBe(true)
+  })
+
+  it('detects template injection (Jinja2)', () => {
+    const report = scanForInjection('{{config.__class__.__init__.__globals__}}', { context: 'prompt' })
+    expect(report.safe).toBe(false)
+    expect(report.matches.some(m => m.rule === 'cmd-template-injection')).toBe(true)
+  })
+
+  it('detects SQL injection (UNION SELECT)', () => {
+    const report = scanForInjection("' UNION SELECT * FROM users --", { context: 'shell' })
+    expect(report.safe).toBe(false)
+    expect(report.matches.some(m => m.rule === 'cmd-sql-injection')).toBe(true)
+  })
+
+  it('detects SQL injection (OR 1=1)', () => {
+    const report = scanForInjection("' OR 1=1 --", { context: 'shell' })
+    expect(report.safe).toBe(false)
+    expect(report.matches.some(m => m.rule === 'cmd-sql-injection')).toBe(true)
+  })
+
+  it('does not false-positive on normal SQL mentions', () => {
+    const report = scanForInjection('SELECT name FROM products WHERE id = 5', { context: 'shell' })
+    // This should not trigger because it lacks injection markers
+    expect(report.matches.filter(m => m.rule === 'cmd-sql-injection')).toHaveLength(0)
+  })
+})

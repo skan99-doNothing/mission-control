@@ -4,12 +4,17 @@ import { useState, useCallback, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Loader } from '@/components/ui/loader'
 
+type CheckSeverity = 'critical' | 'high' | 'medium' | 'low'
+type FixSafety = 'safe' | 'requires-restart' | 'requires-review' | 'manual-only'
+
 interface Check {
   id: string
   name: string
   status: 'pass' | 'fail' | 'warn'
   detail: string
   fix: string
+  severity?: CheckSeverity
+  fixSafety?: FixSafety
 }
 
 interface Category {
@@ -30,13 +35,26 @@ interface ScanResult {
   }
 }
 
-// Check IDs that the /api/security-scan/fix endpoint can auto-fix
-const FIXABLE_IDS = new Set([
-  'env_permissions', 'allowed_hosts', 'hsts_enabled', 'cookie_secure',
-  'api_key_set', 'config_permissions', 'gateway_auth', 'gateway_bind',
-  'elevated_disabled', 'dm_isolation', 'exec_restricted', 'world_writable',
-  'control_ui_device_auth', 'control_ui_insecure_auth', 'fs_workspace_only', 'log_redaction',
-])
+// Check IDs that the /api/security-scan/fix endpoint can auto-fix, with safety levels
+const FIX_SAFETY: Record<string, FixSafety> = {
+  env_permissions: 'safe', config_permissions: 'safe', world_writable: 'safe',
+  hsts_enabled: 'requires-restart', cookie_secure: 'requires-restart',
+  allowed_hosts: 'requires-restart', api_key_set: 'requires-restart',
+  log_redaction: 'requires-restart', dm_isolation: 'requires-restart',
+  fs_workspace_only: 'requires-restart',
+  exec_restricted: 'requires-review', gateway_auth: 'requires-review',
+  gateway_bind: 'requires-review', elevated_disabled: 'requires-review',
+  control_ui_device_auth: 'requires-review', control_ui_insecure_auth: 'requires-review',
+}
+
+const FIXABLE_IDS = new Set(Object.keys(FIX_SAFETY))
+
+const SEVERITY_BADGE: Record<CheckSeverity, { label: string; className: string }> = {
+  critical: { label: 'C', className: 'bg-red-500/20 text-red-400' },
+  high: { label: 'H', className: 'bg-orange-500/20 text-orange-400' },
+  medium: { label: 'M', className: 'bg-amber-500/20 text-amber-400' },
+  low: { label: 'L', className: 'bg-blue-500/20 text-blue-300' },
+}
 
 const STATUS_ICON: Record<string, string> = {
   pass: '+',
@@ -274,8 +292,13 @@ export function SecurityScanCard({ compact = false, autoScan = false }: { compac
                         [{STATUS_ICON[check.status]}]
                       </span>
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-baseline gap-2">
+                        <div className="flex items-center gap-2">
                           <span className="text-sm">{check.name}</span>
+                          {check.severity && (
+                            <span className={`text-2xs px-1 py-0.5 rounded font-mono leading-none ${SEVERITY_BADGE[check.severity].className}`}>
+                              {SEVERITY_BADGE[check.severity].label}
+                            </span>
+                          )}
                         </div>
                         <p className="text-xs text-muted-foreground">{check.detail}</p>
                         {check.fix && check.status !== 'pass' && (
@@ -286,9 +309,9 @@ export function SecurityScanCard({ compact = false, autoScan = false }: { compac
                                 onClick={(e) => { e.stopPropagation(); runFix([check.id]) }}
                                 disabled={fixing !== null}
                                 className="shrink-0 px-1.5 py-0.5 text-2xs rounded border border-void-cyan/30 text-void-cyan hover:bg-void-cyan/10 transition-colors disabled:opacity-50"
-                                title="Auto-fix this issue"
+                                title={FIX_SAFETY[check.id] === 'requires-review' ? 'Requires review — may affect running services' : FIX_SAFETY[check.id] === 'requires-restart' ? 'Requires restart to take effect' : 'Auto-fix this issue'}
                               >
-                                {fixing === check.id ? 'Fixing...' : 'Fix'}
+                                {fixing === check.id ? 'Fixing...' : FIX_SAFETY[check.id] === 'requires-review' ? 'Fix *' : 'Fix'}
                               </button>
                             )}
                             <button

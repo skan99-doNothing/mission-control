@@ -148,6 +148,36 @@ const RULES: InjectionRule[] = [
     contexts: ['prompt', 'shell'],
   },
 
+  // ── SSRF ─────────────────────────────────────────────────────
+  {
+    rule: 'cmd-ssrf',
+    category: 'command',
+    severity: 'critical',
+    pattern: /\b(?:curl|wget|fetch|http\.get|requests\.get|axios)\b[^\n]*(?:169\.254\.169\.254|metadata\.google|100\.100\.100\.200|localhost:\d|127\.0\.0\.1:\d|0\.0\.0\.0:\d|\[::1\]:\d)/i,
+    description: 'SSRF targeting internal/metadata endpoints',
+    contexts: ['prompt', 'shell'],
+  },
+
+  // ── Template injection ──────────────────────────────────────
+  {
+    rule: 'cmd-template-injection',
+    category: 'command',
+    severity: 'warning',
+    pattern: /\{\{.*(?:config|settings|env|self|request|__class__|__globals__|__builtins__).*\}\}|<%.*(?:Runtime|Process|exec|system|eval).*%>|\$\{.*(?:Runtime|exec|java\.lang).*\}/i,
+    description: 'Template injection patterns (Jinja2, EJS, JSP)',
+    contexts: ['prompt', 'shell', 'display'],
+  },
+
+  // ── SQL injection ───────────────────────────────────────────
+  {
+    rule: 'cmd-sql-injection',
+    category: 'command',
+    severity: 'critical',
+    pattern: /(?:\bUNION\s+(?:ALL\s+)?SELECT\b|\b;\s*DROP\s+TABLE\b|'\s*OR\s+['"]?1['"]?\s*=\s*['"]?1|'\s*;\s*(?:DELETE|INSERT|UPDATE|ALTER)\s)/i,
+    description: 'SQL injection patterns',
+    contexts: ['prompt', 'shell'],
+  },
+
   // ── Exfiltration ────────────────────────────────────────────
   {
     rule: 'exfil-send-data',

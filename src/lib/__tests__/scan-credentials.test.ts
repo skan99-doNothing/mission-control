@@ -124,3 +124,49 @@ describe('redactSecrets', () => {
     expect(result).not.toContain(token)
   })
 })
+
+describe('scanForSecrets - new patterns', () => {
+  it('detects Slack webhook URLs', () => {
+    const url = 'https://hooks.slack.com/services/T' + '0'.repeat(8) + '/B' + '0'.repeat(8) + '/' + 'X'.repeat(24)
+    const hits = scanForSecrets(url)
+    expect(hits.some(h => h.type === 'slack_webhook')).toBe(true)
+    expect(hits.find(h => h.type === 'slack_webhook')!.severity).toBe('critical')
+  })
+
+  it('detects Discord webhook URLs', () => {
+    const url = 'https://discord.com/api/webhooks/12345678901234567/' + 'a'.repeat(68)
+    const hits = scanForSecrets(url)
+    expect(hits.some(h => h.type === 'discord_webhook')).toBe(true)
+  })
+
+  it('detects Anthropic API keys', () => {
+    const key = 'sk-ant-api' + 'A'.repeat(30)
+    const hits = scanForSecrets(key)
+    expect(hits.some(h => h.type === 'anthropic_api_key')).toBe(true)
+    expect(hits[0].severity).toBe('critical')
+  })
+
+  it('detects SendGrid API keys', () => {
+    const key = 'SG.' + 'A'.repeat(22) + '.' + 'B'.repeat(43)
+    const hits = scanForSecrets(key)
+    expect(hits.some(h => h.type === 'sendgrid_api_key')).toBe(true)
+  })
+
+  it('detects Mailgun API keys', () => {
+    const key = 'key-' + 'a'.repeat(32)
+    const hits = scanForSecrets(key)
+    expect(hits.some(h => h.type === 'mailgun_api_key')).toBe(true)
+  })
+
+  it('detects Azure storage connection strings', () => {
+    const conn = 'DefaultEndpointsProtocol=https;AccountName=myaccount;AccountKey=' + 'A'.repeat(30)
+    const hits = scanForSecrets(conn)
+    expect(hits.some(h => h.type === 'azure_storage')).toBe(true)
+  })
+
+  it('detects Twilio API keys', () => {
+    const key = 'SK' + 'ab12cd34ef56ab12cd34ef56ab12cd34'
+    const hits = scanForSecrets(key)
+    expect(hits.some(h => h.type === 'twilio_api_key')).toBe(true)
+  })
+})
