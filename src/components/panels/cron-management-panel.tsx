@@ -7,41 +7,12 @@ import { useMissionControl, CronJob } from '@/store'
 import { createClientLogger } from '@/lib/client-logger'
 const log = createClientLogger('CronManagement')
 import { buildDayKey, getCronOccurrences } from '@/lib/cron-occurrences'
+import { describeCronFrequency } from '@/lib/cron-utils'
 
 interface DayJobSummary {
   job: CronJob
   runCount: number
   firstRunMs: number
-}
-
-function describeCronFrequency(schedule: string): string {
-  const parts = schedule.replace(/\s*\([^)]+\)$/, '').trim().split(/\s+/)
-  if (parts.length !== 5) return schedule
-
-  const [minute, hour, dom, mon, dow] = parts
-
-  // Every minute
-  if (minute === '*' && hour === '*') return 'every minute'
-  // Every N minutes
-  if (minute.startsWith('*/') && hour === '*') return `every ${minute.slice(2)}m`
-  // Every hour at :MM
-  if (/^\d+$/.test(minute) && hour === '*') return `hourly at :${minute.padStart(2, '0')}`
-  // Every N hours
-  if (/^\d+$/.test(minute) && hour.startsWith('*/')) return `every ${hour.slice(2)}h`
-  // Specific hour(s) daily
-  if (/^\d+$/.test(minute) && /^\d+$/.test(hour) && dom === '*' && mon === '*') {
-    const h = Number(hour)
-    const m = Number(minute)
-    const time = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`
-    if (dow !== '*') return `${time} (select days)`
-    return `daily at ${time}`
-  }
-  // Weekly
-  if (dom === '*' && mon === '*' && dow !== '*') return 'weekly'
-  // Monthly
-  if (dom !== '*' && mon === '*' && dow === '*') return 'monthly'
-
-  return schedule
 }
 
 const AGENT_COLORS = [
@@ -66,7 +37,30 @@ interface NewJobForm {
   command: string
   description: string
   model: string
+  staggerSeconds: string
 }
+
+interface FormErrors {
+  name?: string
+  schedule?: string
+  command?: string
+  model?: string
+  staggerSeconds?: string
+}
+
+interface RunHistoryEntry {
+  jobId: string
+  status: string
+  deliveryStatus?: string
+  timestamp?: number
+  startedAtMs?: number
+  durationMs?: number
+  error?: string
+}
+
+type ScheduleKindFilter = 'all' | 'at' | 'every' | 'cron'
+type SortField = 'name' | 'schedule' | 'lastRun' | 'nextRun'
+type SortDir = 'asc' | 'desc'
 
 type CalendarViewMode = 'agenda' | 'day' | 'week' | 'month'
 
@@ -118,12 +112,24 @@ export function CronManagementPanel() {
   const [searchQuery, setSearchQuery] = useState('')
   const [agentFilter, setAgentFilter] = useState('all')
   const [stateFilter, setStateFilter] = useState<'all' | 'enabled' | 'disabled'>('all')
+  const [scheduleKindFilter, setScheduleKindFilter] = useState<ScheduleKindFilter>('all')
+  const [sortField, setSortField] = useState<SortField>('name')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const [formErrors, setFormErrors] = useState<FormErrors>({})
+  const [runHistory, setRunHistory] = useState<RunHistoryEntry[]>([])
+  const [runHistoryTotal, setRunHistoryTotal] = useState(0)
+  const [runHistoryHasMore, setRunHistoryHasMore] = useState(false)
+  const [runHistoryPage, setRunHistoryPage] = useState(1)
+  const [runHistoryQuery, setRunHistoryQuery] = useState('')
+  const [showRunHistory, setShowRunHistory] = useState(false)
+  const [runDropdownJobId, setRunDropdownJobId] = useState<string | null>(null)
   const [newJob, setNewJob] = useState<NewJobForm>({
     name: '',
-    schedule: '0 * * * *', // Every hour
+    schedule: '0 * * * *',
     command: '',
     description: '',
-    model: ''
+    model: '',
+    staggerSeconds: '',
   })
 
   const formatRelativeTime = (timestamp: string | number, future = false) => {
@@ -202,6 +208,93 @@ export function CronManagementPanel() {
     loadAvailableModels()
   }, [])
 
+  const validateForm = useCallback((form: NewJobForm): FormErrors => {
+    const errors: FormErrors = {}
+    if (!form.name.trim()) errors.name = 'Job name is required'
+    if (!form.command.trim()) errors.command = 'Command is required'
+    // Validate cron expression: should be 5 space-separated fields
+    const cronParts = form.schedule.trim().split(/\s+/)
+    if (cronParts.length !== 5) {
+      errors.schedule = 'Must be 5 fields: minute hour day month weekday'
+    } else {
+      const cronFieldPattern = /^(\*|(\*\/\d+)|(\d+(-\d+)?(,\d+(-\d+)?)*))(\/\d+)?$/
+      for (const part of cronParts) {
+        if (!cronFieldPattern.test(part)) {
+          errors.schedule = `Invalid cron field: "${part}"`
+          break
+        }
+      }
+    }
+    // Validate model if provided
+    if (form.model.trim() && availableModels.length > 0) {
+      if (!availableModels.includes(form.model.trim())) {
+        errors.model = `Unknown model. Available: ${availableModels.slice(0, 3).join(', ')}${availableModels.length > 3 ? '...' : ''}`
+      }
+    }
+    // Validate stagger
+    if (form.staggerSeconds.trim()) {
+      const val = Number(form.staggerSeconds)
+      if (!Number.isFinite(val) || val <= 0) {
+        errors.staggerSeconds = 'Must be a positive number'
+      }
+    }
+    return errors
+  }, [availableModels])
+
+  const cloneJob = async (job: CronJob) => {
+    try {
+      const response = await fetch('/api/cron', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'clone',
+          jobId: job.id,
+          jobName: job.name,
+        })
+      })
+      const result = await response.json()
+      if (result.success) {
+        await loadCronJobs()
+      } else {
+        alert(`Failed to clone job: ${result.error}`)
+      }
+    } catch (error) {
+      log.error('Failed to clone job:', error)
+      alert('Network error occurred')
+    }
+  }
+
+  const loadRunHistory = useCallback(async (jobId: string, page = 1, query = '') => {
+    try {
+      const params = new URLSearchParams({
+        action: 'history',
+        jobId,
+        page: String(page),
+        ...(query ? { query } : {}),
+      })
+      const response = await fetch(`/api/cron?${params}`)
+      const data = await response.json()
+      if (page === 1) {
+        setRunHistory(data.entries || [])
+      } else {
+        setRunHistory(prev => [...prev, ...(data.entries || [])])
+      }
+      setRunHistoryTotal(data.total || 0)
+      setRunHistoryHasMore(data.hasMore || false)
+      setRunHistoryPage(page)
+    } catch (error) {
+      log.error('Failed to load run history:', error)
+    }
+  }, [])
+
+  const openRunHistory = (job: CronJob) => {
+    setShowRunHistory(true)
+    setRunHistory([])
+    setRunHistoryPage(1)
+    setRunHistoryQuery('')
+    loadRunHistory(job.id || job.name, 1, '')
+  }
+
   const loadJobLogs = async (job: CronJob) => {
     const isLocalAutomation = (job.delivery === 'local' && job.agentId === 'mission-control-local')
     if (isLocalAutomation) {
@@ -272,8 +365,9 @@ export function CronManagementPanel() {
     }
   }
 
-  const triggerJob = async (job: CronJob) => {
+  const triggerJob = async (job: CronJob, mode: 'force' | 'due' = 'force') => {
     const isLocalAutomation = (job.delivery === 'local' && job.agentId === 'mission-control-local')
+    setRunDropdownJobId(null)
     try {
       if (isLocalAutomation) {
         const response = await fetch('/api/scheduler', {
@@ -298,11 +392,12 @@ export function CronManagementPanel() {
           action: 'trigger',
           jobId: job.id,
           jobName: job.name,
+          mode,
         })
       })
 
       const result = await response.json()
-      
+
       if (result.success) {
         alert(`Job executed successfully:\n${result.stdout}`)
       } else {
@@ -315,12 +410,12 @@ export function CronManagementPanel() {
   }
 
   const addJob = async () => {
-    if (!newJob.name || !newJob.schedule || !newJob.command) {
-      alert('Please fill in all required fields')
-      return
-    }
+    const errors = validateForm(newJob)
+    setFormErrors(errors)
+    if (Object.keys(errors).length > 0) return
 
     try {
+      const staggerVal = newJob.staggerSeconds.trim() ? Number(newJob.staggerSeconds) : undefined
       const response = await fetch('/api/cron', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -329,7 +424,8 @@ export function CronManagementPanel() {
           jobName: newJob.name,
           schedule: newJob.schedule,
           command: newJob.command,
-          ...(newJob.model.trim() ? { model: newJob.model.trim() } : {})
+          ...(newJob.model.trim() ? { model: newJob.model.trim() } : {}),
+          ...(staggerVal && staggerVal > 0 ? { staggerSeconds: staggerVal } : {}),
         })
       })
 
@@ -339,8 +435,10 @@ export function CronManagementPanel() {
           schedule: '0 * * * *',
           command: '',
           description: '',
-          model: ''
+          model: '',
+          staggerSeconds: '',
         })
+        setFormErrors({})
         setShowAddForm(false)
         await loadCronJobs()
       } else {
@@ -425,23 +523,53 @@ export function CronManagementPanel() {
     )
   )
 
-  const filteredJobs = cronJobs.filter((job) => {
-    const query = searchQuery.trim().toLowerCase()
-    const matchesQuery =
-      !query ||
-      job.name.toLowerCase().includes(query) ||
-      job.command.toLowerCase().includes(query) ||
-      (job.agentId || '').toLowerCase().includes(query) ||
-      (job.model || '').toLowerCase().includes(query)
+  const filteredJobs = cronJobs
+    .filter((job) => {
+      const query = searchQuery.trim().toLowerCase()
+      const matchesQuery =
+        !query ||
+        job.name.toLowerCase().includes(query) ||
+        job.command.toLowerCase().includes(query) ||
+        (job.agentId || '').toLowerCase().includes(query) ||
+        (job.model || '').toLowerCase().includes(query)
 
-    const matchesAgent = agentFilter === 'all' || (job.agentId || '') === agentFilter
-    const matchesState =
-      stateFilter === 'all' ||
-      (stateFilter === 'enabled' && job.enabled) ||
-      (stateFilter === 'disabled' && !job.enabled)
+      const matchesAgent = agentFilter === 'all' || (job.agentId || '') === agentFilter
+      const matchesState =
+        stateFilter === 'all' ||
+        (stateFilter === 'enabled' && job.enabled) ||
+        (stateFilter === 'disabled' && !job.enabled)
 
-    return matchesQuery && matchesAgent && matchesState
-  })
+      // Schedule kind filter: detect from the schedule string
+      let matchesKind = true
+      if (scheduleKindFilter !== 'all') {
+        const sched = job.schedule.toLowerCase()
+        if (scheduleKindFilter === 'cron') {
+          // Standard 5-field cron
+          matchesKind = sched.replace(/\s*\([^)]+\)$/, '').trim().split(/\s+/).length === 5
+        } else if (scheduleKindFilter === 'every') {
+          matchesKind = sched.startsWith('every') || sched.includes('*/')
+        } else if (scheduleKindFilter === 'at') {
+          matchesKind = sched.startsWith('at ') || /^\d{4}-/.test(sched)
+        }
+      }
+
+      return matchesQuery && matchesAgent && matchesState && matchesKind
+    })
+    .sort((a, b) => {
+      const dir = sortDir === 'asc' ? 1 : -1
+      switch (sortField) {
+        case 'name':
+          return dir * a.name.localeCompare(b.name)
+        case 'schedule':
+          return dir * a.schedule.localeCompare(b.schedule)
+        case 'lastRun':
+          return dir * ((a.lastRun || 0) - (b.lastRun || 0))
+        case 'nextRun':
+          return dir * ((a.nextRun || 0) - (b.nextRun || 0))
+        default:
+          return 0
+      }
+    })
 
   const dayStart = startOfDay(calendarDate)
   const dayEnd = addDays(dayStart, 1)
@@ -657,6 +785,39 @@ export function CronManagementPanel() {
                 <option value="enabled">Enabled</option>
                 <option value="disabled">Disabled</option>
               </select>
+            </div>
+            <div className="grid md:grid-cols-3 gap-3">
+              <div className="flex gap-1">
+                {(['all', 'cron', 'every', 'at'] as ScheduleKindFilter[]).map((kind) => (
+                  <Button
+                    key={kind}
+                    onClick={() => setScheduleKindFilter(kind)}
+                    variant={scheduleKindFilter === kind ? 'default' : 'outline'}
+                    size="sm"
+                    className="text-xs"
+                  >
+                    {kind === 'all' ? 'All' : kind}
+                  </Button>
+                ))}
+              </div>
+              <select
+                value={sortField}
+                onChange={(e) => setSortField(e.target.value as SortField)}
+                className="px-3 py-2 border border-border rounded-md bg-background text-foreground text-sm"
+              >
+                <option value="name">Sort: Name</option>
+                <option value="schedule">Sort: Schedule</option>
+                <option value="lastRun">Sort: Last Run</option>
+                <option value="nextRun">Sort: Next Run</option>
+              </select>
+              <Button
+                onClick={() => setSortDir(d => d === 'asc' ? 'desc' : 'asc')}
+                variant="outline"
+                size="sm"
+                className="text-xs"
+              >
+                {sortDir === 'asc' ? 'Ascending' : 'Descending'}
+              </Button>
             </div>
 
             {calendarView === 'agenda' && (
@@ -936,13 +1097,58 @@ export function CronManagementPanel() {
                             >
                               {job.enabled ? 'Disable' : 'Enable'}
                             </Button>
+                            <div className="relative">
+                              <div className="flex">
+                                <Button
+                                  onClick={(e) => { e.stopPropagation(); triggerJob(job, 'force') }}
+                                  size="xs"
+                                  variant="outline"
+                                  className="text-[10px] h-6 px-1.5 rounded-r-none border-r-0"
+                                >
+                                  Run
+                                </Button>
+                                <Button
+                                  onClick={(e) => { e.stopPropagation(); setRunDropdownJobId(prev => prev === (job.id || job.name) ? null : (job.id || job.name)) }}
+                                  size="xs"
+                                  variant="outline"
+                                  className="text-[10px] h-6 px-1 rounded-l-none"
+                                >
+                                  v
+                                </Button>
+                              </div>
+                              {runDropdownJobId === (job.id || job.name) && (
+                                <div className="absolute right-0 top-7 z-20 bg-card border border-border rounded-md shadow-lg py-1 min-w-[140px]">
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); triggerJob(job, 'force') }}
+                                    className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-secondary/50"
+                                  >
+                                    Run now (force)
+                                  </button>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); triggerJob(job, 'due') }}
+                                    className="w-full text-left px-3 py-1.5 text-xs text-foreground hover:bg-secondary/50"
+                                  >
+                                    Run now (if due)
+                                  </button>
+                                </div>
+                              )}
+                            </div>
                             <Button
-                              onClick={(e) => { e.stopPropagation(); triggerJob(job) }}
+                              onClick={(e) => { e.stopPropagation(); cloneJob(job) }}
+                              disabled={isLocalAutomation}
                               size="xs"
                               variant="outline"
                               className="text-[10px] h-6 px-1.5"
                             >
-                              Run
+                              Clone
+                            </Button>
+                            <Button
+                              onClick={(e) => { e.stopPropagation(); handleJobSelect(job); openRunHistory(job) }}
+                              size="xs"
+                              variant="outline"
+                              className="text-[10px] h-6 px-1.5"
+                            >
+                              History
                             </Button>
                           </div>
                         </td>
@@ -1040,13 +1246,20 @@ export function CronManagementPanel() {
                   </div>
                 </div>
 
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <Button
-                    onClick={() => triggerJob(selectedJob)}
+                    onClick={() => triggerJob(selectedJob, 'force')}
                     size="sm"
                     className="bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border-blue-500/30"
                   >
-                    Run Now
+                    Run Now (force)
+                  </Button>
+                  <Button
+                    onClick={() => triggerJob(selectedJob, 'due')}
+                    size="sm"
+                    className="bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 border-blue-500/30"
+                  >
+                    Run (if due)
                   </Button>
                   <Button
                     onClick={() => toggleJob(selectedJob)}
@@ -1057,6 +1270,21 @@ export function CronManagementPanel() {
                       : 'bg-green-500/20 text-green-400 hover:bg-green-500/30 border-green-500/30'}
                   >
                     {selectedJob.enabled ? 'Disable' : 'Enable'}
+                  </Button>
+                  <Button
+                    onClick={() => cloneJob(selectedJob)}
+                    disabled={selectedJob.delivery === 'local' && selectedJob.agentId === 'mission-control-local'}
+                    size="sm"
+                    variant="outline"
+                  >
+                    Clone
+                  </Button>
+                  <Button
+                    onClick={() => openRunHistory(selectedJob)}
+                    size="sm"
+                    variant="outline"
+                  >
+                    History
                   </Button>
                   <Button
                     onClick={() => removeJob(selectedJob)}
@@ -1092,6 +1320,84 @@ export function CronManagementPanel() {
         )}
       </div>
 
+      {/* Run History Panel */}
+      {showRunHistory && selectedJob && (
+        <div className="bg-card border border-border rounded-lg p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold text-foreground">Run History: {selectedJob.name}</h2>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">{runHistoryTotal} total runs</span>
+              <Button onClick={() => setShowRunHistory(false)} variant="ghost" size="sm" className="text-xs">Close</Button>
+            </div>
+          </div>
+          <div className="mb-3">
+            <input
+              value={runHistoryQuery}
+              onChange={(e) => {
+                setRunHistoryQuery(e.target.value)
+                loadRunHistory(selectedJob.id || selectedJob.name, 1, e.target.value)
+              }}
+              placeholder="Filter runs by status, error..."
+              className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground text-sm"
+            />
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-border text-left text-xs text-muted-foreground">
+                  <th className="pb-2 pr-3 font-medium">Status</th>
+                  <th className="pb-2 pr-3 font-medium">Delivery</th>
+                  <th className="pb-2 pr-3 font-medium">Timestamp</th>
+                  <th className="pb-2 pr-3 font-medium">Duration</th>
+                  <th className="pb-2 font-medium">Error</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border/50">
+                {runHistory.length === 0 ? (
+                  <tr><td colSpan={5} className="py-4 text-center text-muted-foreground">No run history available</td></tr>
+                ) : (
+                  runHistory.map((entry, idx) => {
+                    const ts = entry.timestamp || entry.startedAtMs
+                    return (
+                      <tr key={idx} className="hover:bg-secondary/50">
+                        <td className="py-2 pr-3">
+                          <span className={`text-xs px-1.5 py-0.5 rounded ${getStatusBg(entry.status)} ${getStatusColor(entry.status)}`}>
+                            {entry.status}
+                          </span>
+                        </td>
+                        <td className="py-2 pr-3 text-xs text-muted-foreground">
+                          {entry.deliveryStatus || '--'}
+                        </td>
+                        <td className="py-2 pr-3 text-xs text-muted-foreground whitespace-nowrap">
+                          {ts ? new Date(ts).toLocaleString() : '--'}
+                        </td>
+                        <td className="py-2 pr-3 text-xs text-muted-foreground">
+                          {entry.durationMs ? `${(entry.durationMs / 1000).toFixed(1)}s` : '--'}
+                        </td>
+                        <td className="py-2 text-xs text-red-400 truncate max-w-64">
+                          {entry.error || ''}
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+          {runHistoryHasMore && (
+            <div className="mt-3 text-center">
+              <Button
+                onClick={() => loadRunHistory(selectedJob.id || selectedJob.name, runHistoryPage + 1, runHistoryQuery)}
+                variant="outline"
+                size="sm"
+              >
+                Load More
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Claude Code Teams Overview */}
       <ClaudeCodeTeamsSection />
 
@@ -1109,8 +1415,9 @@ export function CronManagementPanel() {
                   value={newJob.name}
                   onChange={(e) => setNewJob(prev => ({ ...prev, name: e.target.value }))}
                   placeholder="e.g., daily-backup, system-check"
-                  className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground"
+                  className={`w-full px-3 py-2 border rounded-md bg-background text-foreground ${formErrors.name ? 'border-red-500' : 'border-border'}`}
                 />
+                {formErrors.name && <div className="mt-1 text-xs text-red-400">{formErrors.name}</div>}
               </div>
 
               <div>
@@ -1121,7 +1428,7 @@ export function CronManagementPanel() {
                     value={newJob.schedule}
                     onChange={(e) => setNewJob(prev => ({ ...prev, schedule: e.target.value }))}
                     placeholder="0 * * * *"
-                    className="flex-1 px-3 py-2 border border-border rounded-md bg-background text-foreground font-mono"
+                    className={`flex-1 px-3 py-2 border rounded-md bg-background text-foreground font-mono ${formErrors.schedule ? 'border-red-500' : 'border-border'}`}
                   />
                   <select
                     value=""
@@ -1134,9 +1441,13 @@ export function CronManagementPanel() {
                     ))}
                   </select>
                 </div>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  Format: minute hour day month dayOfWeek
-                </div>
+                {formErrors.schedule ? (
+                  <div className="mt-1 text-xs text-red-400">{formErrors.schedule}</div>
+                ) : (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Format: minute hour day month dayOfWeek
+                  </div>
+                )}
               </div>
 
               <div>
@@ -1145,8 +1456,9 @@ export function CronManagementPanel() {
                   value={newJob.command}
                   onChange={(e) => setNewJob(prev => ({ ...prev, command: e.target.value }))}
                   placeholder="cd /path/to/script && ./script.sh"
-                  className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground font-mono h-24"
+                  className={`w-full px-3 py-2 border rounded-md bg-background text-foreground font-mono h-24 ${formErrors.command ? 'border-red-500' : 'border-border'}`}
                 />
+                {formErrors.command && <div className="mt-1 text-xs text-red-400">{formErrors.command}</div>}
               </div>
 
               <div>
@@ -1157,16 +1469,41 @@ export function CronManagementPanel() {
                   onChange={(e) => setNewJob(prev => ({ ...prev, model: e.target.value }))}
                   list="cron-model-suggestions"
                   placeholder="anthropic/claude-sonnet-4-20250514"
-                  className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground font-mono text-sm"
+                  className={`w-full px-3 py-2 border rounded-md bg-background text-foreground font-mono text-sm ${formErrors.model ? 'border-red-500' : 'border-border'}`}
                 />
                 <datalist id="cron-model-suggestions">
                   {availableModels.map((modelName) => (
                     <option key={modelName} value={modelName} />
                   ))}
                 </datalist>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  Leave empty to use the agent or gateway default model.
+                {formErrors.model ? (
+                  <div className="mt-1 text-xs text-red-400">{formErrors.model}</div>
+                ) : (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Leave empty to use the agent or gateway default model.
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-foreground mb-2">Stagger Offset (Optional)</label>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    value={newJob.staggerSeconds}
+                    onChange={(e) => setNewJob(prev => ({ ...prev, staggerSeconds: e.target.value }))}
+                    placeholder="0"
+                    className={`w-32 px-3 py-2 border rounded-md bg-background text-foreground font-mono text-sm ${formErrors.staggerSeconds ? 'border-red-500' : 'border-border'}`}
+                  />
+                  <span className="text-sm text-muted-foreground">seconds</span>
                 </div>
+                {formErrors.staggerSeconds ? (
+                  <div className="mt-1 text-xs text-red-400">{formErrors.staggerSeconds}</div>
+                ) : (
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    Delay execution to avoid overlapping with other jobs on the same schedule.
+                  </div>
+                )}
               </div>
 
               <div>

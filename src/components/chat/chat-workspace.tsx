@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useCallback, useState, useRef } from 'react'
-import { useMissionControl, type Conversation } from '@/store'
+import { useMissionControl, type Conversation, type ChatAttachment } from '@/store'
 import { useSmartPoll } from '@/lib/use-smart-poll'
 import { createClientLogger } from '@/lib/client-logger'
 import { ConversationList } from './conversation-list'
@@ -29,12 +29,15 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
     agents,
     conversations,
     setAgents,
+    notifications,
   } = useMissionControl()
 
   const pendingIdRef = useRef(-1)
 
   const [showConversations, setShowConversations] = useState(true)
   const [isMobile, setIsMobile] = useState(false)
+  const [focusMode, setFocusMode] = useState(false)
+  const [isGenerating, setIsGenerating] = useState(false)
   const [sessionTranscript, setSessionTranscript] = useState<SessionTranscriptMessage[]>([])
   const [sessionTranscriptLoading, setSessionTranscriptLoading] = useState(false)
   const [sessionTranscriptError, setSessionTranscriptError] = useState<string | null>(null)
@@ -118,7 +121,7 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
   }, [isOverlay, onClose])
 
   // Send message handler with optimistic updates
-  const handleSend = async (content: string) => {
+  const handleSend = async (content: string, attachments?: ChatAttachment[]) => {
     if (!activeConversation) return
 
     const mentionMatch = content.match(/^@(\w+)\s/)
@@ -139,11 +142,13 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
       to_agent: to,
       content: cleanContent,
       message_type: 'text' as const,
+      attachments,
       created_at: Math.floor(Date.now() / 1000),
       pendingStatus: 'sending' as const,
     }
 
     addChatMessage(optimisticMessage)
+    setIsGenerating(true)
 
     try {
       const res = await fetch('/api/chat/messages', {
@@ -155,6 +160,7 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
           content: cleanContent,
           conversation_id: activeConversation,
           message_type: 'text',
+          attachments,
           forward: true,
         }),
       })
@@ -170,8 +176,30 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
     } catch (err) {
       log.error('Failed to send message:', err)
       updatePendingMessage(tempId, { pendingStatus: 'failed' })
+    } finally {
+      setIsGenerating(false)
     }
   }
+
+  // Abort active generation
+  const handleAbort = useCallback(() => {
+    if (!activeConversation) return
+    // Try to send cancel RPC via websocket if available
+    try {
+      const ws = (window as any).__mcWebSocket
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: 'req',
+          method: 'chat.cancel',
+          id: `mc-cancel-${Date.now()}`,
+          params: { sessionId: activeConversation },
+        }))
+      }
+    } catch (err) {
+      log.error('Failed to send abort:', err)
+    }
+    setIsGenerating(false)
+  }, [activeConversation])
 
   const handleNewConversation = (agentName: string) => {
     const convId = `agent_${agentName}`
@@ -274,9 +302,9 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
   }, [activeConversation, conversations, setConversations])
 
   return (
-    <div className="flex h-full flex-col bg-card">
+    <div className={`flex h-full flex-col bg-card ${focusMode ? 'fixed inset-0 z-50' : ''}`}>
       {/* Header */}
-      <div className="glass-strong flex h-12 flex-shrink-0 items-center justify-between border-b border-border px-4">
+      <div className={`glass-strong flex h-12 flex-shrink-0 items-center justify-between border-b border-border px-4 ${focusMode ? 'h-10' : ''}`}>
         <div className="flex items-center gap-3">
           {/* Back button on mobile when in chat view */}
           {isMobile && !showConversations && (
@@ -303,6 +331,25 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
         </div>
 
         <div className="flex items-center gap-1">
+          {/* Focus mode toggle */}
+          <Button
+            onClick={() => setFocusMode(f => !f)}
+            variant="ghost"
+            size="icon-xs"
+            className="hidden md:flex"
+            title={focusMode ? 'Exit focus mode' : 'Focus mode'}
+          >
+            {focusMode ? (
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M4 14h8M4 2h8M2 4v8M14 4v8" />
+              </svg>
+            ) : (
+              <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round">
+                <path d="M2 2h4M10 2h4M2 14h4M10 14h4M2 2v4M14 2v4M2 14v-4M14 14v-4" />
+              </svg>
+            )}
+          </Button>
+
           {/* Toggle conversations sidebar (desktop) */}
           <Button
             onClick={() => setShowConversations(!showConversations)}
@@ -334,7 +381,7 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
       {/* Body */}
       <div className="flex flex-1 overflow-hidden">
         {/* Conversations sidebar */}
-        {showConversations && (
+        {showConversations && !focusMode && (
           <div className={`${isMobile ? 'w-full' : 'w-56 border-r border-border'} flex-shrink-0`}>
             <ConversationList onNewConversation={handleNewConversation} />
           </div>
@@ -373,10 +420,13 @@ export function ChatWorkspace({ mode = 'embedded', onClose }: ChatWorkspaceProps
             ) : (
               <>
                 <MessageList />
+                <ChatIndicators notifications={notifications} />
                 <ChatInput
                   onSend={handleSend}
+                  onAbort={handleAbort}
                   disabled={!canSendMessage}
                   agents={agents.map(a => ({ name: a.name, role: a.role }))}
+                  isGenerating={isGenerating}
                 />
               </>
             )}
@@ -632,6 +682,45 @@ function SessionConversationView({
           </div>
         )}
       </div>
+    </div>
+  )
+}
+
+/** Inline toast indicators for compaction and model fallback events */
+function ChatIndicators({ notifications }: { notifications: Array<{ id: number; type: string; title: string; message: string; created_at: number }> }) {
+  const TOAST_DURATION_MS = 8000
+  const now = Math.floor(Date.now() / 1000)
+
+  // Show recent compaction/fallback notifications as inline toasts
+  const recentToasts = notifications.filter(n => {
+    const age = now - n.created_at
+    if (age > TOAST_DURATION_MS / 1000) return false
+    return n.title === 'Context Compaction' || n.title === 'Model Fallback'
+  }).slice(0, 3)
+
+  if (recentToasts.length === 0) return null
+
+  return (
+    <div className="flex flex-col gap-1 px-4 py-1 flex-shrink-0">
+      {recentToasts.map(toast => {
+        const isCompaction = toast.title === 'Context Compaction'
+        const isFallback = toast.title === 'Model Fallback'
+        return (
+          <div
+            key={toast.id}
+            className={`flex items-center gap-2 rounded-md px-3 py-1.5 text-[11px] animate-in fade-in slide-in-from-bottom-1 ${
+              isCompaction
+                ? 'bg-blue-500/10 text-blue-300 border border-blue-500/20'
+                : isFallback
+                ? 'bg-amber-500/10 text-amber-300 border border-amber-500/20'
+                : 'bg-surface-1 text-muted-foreground border border-border/30'
+            }`}
+          >
+            <span className="font-medium">{toast.title}</span>
+            <span className="text-current/70 truncate">{toast.message}</span>
+          </div>
+        )
+      })}
     </div>
   )
 }

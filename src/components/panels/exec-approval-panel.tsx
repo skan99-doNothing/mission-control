@@ -1,11 +1,13 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { useMissionControl, type ExecApprovalRequest } from '@/store'
 import { useWebSocket } from '@/lib/websocket'
+import { matchesGlobPattern } from '@/lib/exec-approval-utils'
 
 type FilterTab = 'all' | 'pending' | 'resolved'
+type PanelView = 'approvals' | 'allowlist'
 
 const RISK_BORDER: Record<ExecApprovalRequest['risk'], string> = {
   low: 'border-l-green-500',
@@ -37,6 +39,7 @@ export function ExecApprovalPanel() {
   const { execApprovals, updateExecApproval } = useMissionControl()
   const { sendMessage } = useWebSocket()
   const [filter, setFilter] = useState<FilterTab>('pending')
+  const [view, setView] = useState<PanelView>('approvals')
 
   const pendingCount = execApprovals.filter(a => a.status === 'pending').length
 
@@ -58,7 +61,6 @@ export function ExecApprovalPanel() {
   }, [execApprovals, filter, now])
 
   const handleAction = (id: string, decision: 'allow-once' | 'allow-always' | 'deny') => {
-    // Send via WebSocket RPC
     const sent = sendMessage({
       type: 'req',
       method: 'exec.approval.resolve',
@@ -67,7 +69,6 @@ export function ExecApprovalPanel() {
     })
 
     if (!sent) {
-      // Fallback to HTTP
       const action = decision === 'deny' ? 'deny' : decision === 'allow-always' ? 'always_allow' : 'approve'
       fetch('/api/exec-approvals', {
         method: 'POST',
@@ -76,7 +77,6 @@ export function ExecApprovalPanel() {
       }).catch(() => {})
     }
 
-    // Optimistic update
     const newStatus = decision === 'deny' ? 'denied' : 'approved'
     updateExecApproval(id, { status: newStatus as ExecApprovalRequest['status'] })
   }
@@ -98,39 +98,333 @@ export function ExecApprovalPanel() {
         </span>
       </div>
 
-      {/* Filter tabs */}
+      {/* View toggle */}
       <div className="flex gap-1 mb-4 border-b border-border">
-        {(['all', 'pending', 'resolved'] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setFilter(tab)}
-            className={`px-3 py-1.5 text-sm capitalize transition-colors ${
-              filter === tab
-                ? 'text-foreground border-b-2 border-foreground'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
+        <button
+          onClick={() => setView('approvals')}
+          className={`px-3 py-1.5 text-sm transition-colors ${
+            view === 'approvals'
+              ? 'text-foreground border-b-2 border-foreground'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          Approvals
+        </button>
+        <button
+          onClick={() => setView('allowlist')}
+          className={`px-3 py-1.5 text-sm transition-colors ${
+            view === 'allowlist'
+              ? 'text-foreground border-b-2 border-foreground'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          Allowlist Config
+        </button>
       </div>
 
-      {/* Approval list */}
-      {displayApprovals.length === 0 ? (
+      {view === 'approvals' ? (
+        <>
+          {/* Filter tabs */}
+          <div className="flex gap-1 mb-4">
+            {(['all', 'pending', 'resolved'] as const).map((tab) => (
+              <button
+                key={tab}
+                onClick={() => setFilter(tab)}
+                className={`px-2.5 py-1 text-xs rounded capitalize transition-colors ${
+                  filter === tab
+                    ? 'bg-secondary text-foreground'
+                    : 'text-muted-foreground hover:text-foreground'
+                }`}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+
+          {/* Approval list */}
+          {displayApprovals.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground text-sm">
+              {filter === 'pending'
+                ? 'No pending approvals. Execution requests from agents will appear here as an overlay.'
+                : 'No approvals to display.'}
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {displayApprovals.map((approval) => (
+                <ApprovalCard
+                  key={approval.id}
+                  approval={approval}
+                  onAction={handleAction}
+                />
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <AllowlistEditor execApprovals={execApprovals} />
+      )}
+    </div>
+  )
+}
+
+type AllowlistState = Record<string, { pattern: string }[]>
+
+function AllowlistEditor({ execApprovals }: { execApprovals: ExecApprovalRequest[] }) {
+  const [agents, setAgents] = useState<AllowlistState>({})
+  const [hash, setHash] = useState<string>('')
+  const [loading, setLoading] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [dirty, setDirty] = useState(false)
+  const [newAgentId, setNewAgentId] = useState('')
+
+  const loadAllowlist = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/exec-approvals?action=allowlist')
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
+      const data = await res.json()
+      setAgents(data.agents ?? {})
+      setHash(data.hash ?? '')
+      setDirty(false)
+    } catch (err: any) {
+      setError(err.message || 'Failed to load allowlist')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadAllowlist() }, [loadAllowlist])
+
+  const saveAllowlist = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/exec-approvals', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agents, hash }),
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || `HTTP ${res.status}`)
+      }
+      setHash(data.hash ?? '')
+      setDirty(false)
+    } catch (err: any) {
+      setError(err.message || 'Failed to save allowlist')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const addAgent = () => {
+    const id = newAgentId.trim()
+    if (!id || agents[id]) return
+    setAgents(prev => ({ ...prev, [id]: [] }))
+    setNewAgentId('')
+    setDirty(true)
+  }
+
+  const addPattern = (agentId: string) => {
+    setAgents(prev => ({
+      ...prev,
+      [agentId]: [...(prev[agentId] || []), { pattern: '' }],
+    }))
+    setDirty(true)
+  }
+
+  const updatePattern = (agentId: string, index: number, value: string) => {
+    setAgents(prev => ({
+      ...prev,
+      [agentId]: prev[agentId].map((p, i) => i === index ? { pattern: value } : p),
+    }))
+    setDirty(true)
+  }
+
+  const removePattern = (agentId: string, index: number) => {
+    setAgents(prev => ({
+      ...prev,
+      [agentId]: prev[agentId].filter((_, i) => i !== index),
+    }))
+    setDirty(true)
+  }
+
+  const removeAgent = (agentId: string) => {
+    setAgents(prev => {
+      const next = { ...prev }
+      delete next[agentId]
+      return next
+    })
+    setDirty(true)
+  }
+
+  const recentCommands = useMemo(() => {
+    return execApprovals
+      .filter(a => a.command)
+      .slice(0, 50)
+      .map(a => ({ command: a.command!, agentName: a.agentName || a.sessionId }))
+  }, [execApprovals])
+
+  if (loading) {
+    return <div className="text-center py-12 text-muted-foreground text-sm">Loading allowlist...</div>
+  }
+
+  const agentIds = Object.keys(agents)
+
+  return (
+    <div className="space-y-4">
+      {error && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-400">
+          {error}
+        </div>
+      )}
+
+      {/* Action bar */}
+      <div className="flex items-center gap-2">
+        <input
+          type="text"
+          value={newAgentId}
+          onChange={(e) => setNewAgentId(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && addAgent()}
+          placeholder="Agent ID (e.g. claude, assistant)"
+          className="flex-1 bg-secondary border border-border rounded px-2.5 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+        />
+        <Button size="sm" variant="outline" onClick={addAgent} disabled={!newAgentId.trim()}>
+          Add agent
+        </Button>
+        <Button size="sm" onClick={saveAllowlist} disabled={!dirty || saving}>
+          {saving ? 'Saving...' : 'Save'}
+        </Button>
+        <Button size="sm" variant="outline" onClick={loadAllowlist} disabled={loading}>
+          Reload
+        </Button>
+      </div>
+
+      {agentIds.length === 0 ? (
         <div className="text-center py-12 text-muted-foreground text-sm">
-          {filter === 'pending'
-            ? 'No pending approvals. Execution requests from agents will appear here as an overlay.'
-            : 'No approvals to display.'}
+          No agents configured. Add an agent ID above to create an allowlist.
         </div>
       ) : (
-        <div className="space-y-3">
-          {displayApprovals.map((approval) => (
-            <ApprovalCard
-              key={approval.id}
-              approval={approval}
-              onAction={handleAction}
-            />
+        agentIds.map(agentId => (
+          <AgentAllowlistCard
+            key={agentId}
+            agentId={agentId}
+            patterns={agents[agentId]}
+            recentCommands={recentCommands}
+            onAddPattern={() => addPattern(agentId)}
+            onUpdatePattern={(i, v) => updatePattern(agentId, i, v)}
+            onRemovePattern={(i) => removePattern(agentId, i)}
+            onRemoveAgent={() => removeAgent(agentId)}
+          />
+        ))
+      )}
+    </div>
+  )
+}
+
+function AgentAllowlistCard({
+  agentId,
+  patterns,
+  recentCommands,
+  onAddPattern,
+  onUpdatePattern,
+  onRemovePattern,
+  onRemoveAgent,
+}: {
+  agentId: string
+  patterns: { pattern: string }[]
+  recentCommands: { command: string; agentName: string }[]
+  onAddPattern: () => void
+  onUpdatePattern: (index: number, value: string) => void
+  onRemovePattern: (index: number) => void
+  onRemoveAgent: () => void
+}) {
+  const [previewIndex, setPreviewIndex] = useState<number | null>(null)
+
+  const previewMatches = useMemo(() => {
+    if (previewIndex === null) return []
+    const pat = patterns[previewIndex]?.pattern
+    if (!pat) return []
+    return recentCommands.filter(c => matchesGlobPattern(pat, c.command))
+  }, [previewIndex, patterns, recentCommands])
+
+  return (
+    <div className="rounded-lg border border-border bg-card p-4">
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <span className="font-medium text-sm text-foreground">{agentId}</span>
+          <span className="text-xs text-muted-foreground">
+            {patterns.length} pattern{patterns.length !== 1 ? 's' : ''}
+          </span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button size="sm" variant="outline" onClick={onAddPattern}>
+            Add pattern
+          </Button>
+          <button
+            onClick={onRemoveAgent}
+            className="text-xs text-muted-foreground hover:text-red-400 transition-colors px-1"
+            title="Remove agent"
+          >
+            x
+          </button>
+        </div>
+      </div>
+
+      {patterns.length === 0 ? (
+        <div className="text-xs text-muted-foreground py-2">
+          No allowlist patterns. Commands will require manual approval.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {patterns.map((entry, index) => (
+            <div key={index} className="flex items-center gap-2">
+              <input
+                type="text"
+                value={entry.pattern}
+                onChange={(e) => onUpdatePattern(index, e.target.value)}
+                onFocus={() => setPreviewIndex(index)}
+                onBlur={() => setPreviewIndex(null)}
+                placeholder="e.g. git *, npm install *, ls"
+                className="flex-1 font-mono bg-secondary border border-border rounded px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-primary/50"
+              />
+              <button
+                onClick={() => onRemovePattern(index)}
+                className="text-xs text-muted-foreground hover:text-red-400 transition-colors px-1.5"
+                title="Remove pattern"
+              >
+                x
+              </button>
+            </div>
           ))}
+        </div>
+      )}
+
+      {/* Pattern preview */}
+      {previewIndex !== null && patterns[previewIndex]?.pattern && (
+        <div className="mt-2 border-t border-border pt-2">
+          <div className="text-xs text-muted-foreground mb-1">
+            Preview: {previewMatches.length} recent command{previewMatches.length !== 1 ? 's' : ''} would match
+          </div>
+          {previewMatches.length > 0 && (
+            <div className="space-y-1 max-h-24 overflow-auto">
+              {previewMatches.slice(0, 5).map((m, i) => (
+                <div key={i} className="text-xs font-mono text-green-400 truncate">
+                  $ {m.command}
+                </div>
+              ))}
+              {previewMatches.length > 5 && (
+                <div className="text-xs text-muted-foreground">
+                  ...and {previewMatches.length - 5} more
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

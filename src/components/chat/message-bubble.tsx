@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { ChatMessage } from '@/store'
+import { detectTextDirection } from '@/lib/chat-utils'
 
 const AGENT_COLORS: Record<string, { bg: string; text: string; border: string }> = {
   coordinator: { bg: 'bg-purple-500/10', text: 'text-purple-400', border: 'border-purple-500/20' },
@@ -224,10 +225,25 @@ export function MessageBubble({ message, isHuman, isGrouped }: MessageBubbleProp
             ? `${theme.bg} border ${theme.border} font-mono text-xs rounded-tl-sm`
             : `bg-surface-2 text-foreground ${isGrouped ? 'rounded-tl-sm' : 'rounded-tl-sm'}`
         }`}>
+          {/* Attachment thumbnails */}
+          {message.attachments && message.attachments.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 mb-1.5">
+              {message.attachments.map((att, idx) => (
+                att.type.startsWith('image/') ? (
+                  <img key={idx} src={att.dataUrl} alt={att.name} className="max-w-[200px] max-h-[160px] rounded-md object-cover border border-border/30" />
+                ) : (
+                  <div key={idx} className="flex items-center gap-1.5 bg-black/20 rounded-md px-2 py-1 text-xs text-muted-foreground">
+                    <span className="font-medium">{att.name}</span>
+                    <span className="text-[10px] text-muted-foreground/50">{att.size < 1024 ? `${att.size} B` : att.size < 1024 * 1024 ? `${(att.size / 1024).toFixed(1)} KB` : `${(att.size / (1024 * 1024)).toFixed(1)} MB`}</span>
+                  </div>
+                )
+              ))}
+            </div>
+          )}
           {isCommand ? (
             <pre className="whitespace-pre-wrap">{message.content}</pre>
           ) : (
-            <div className="whitespace-pre-wrap break-words">{renderContent(message.content)}</div>
+            <div className="whitespace-pre-wrap break-words" dir={detectTextDirection(message.content)}>{renderContent(message.content)}</div>
           )}
         </div>
       </div>

@@ -2139,3 +2139,801 @@ export function ConfigTab({
     </div>
   )
 }
+
+// ===== Files Tab — Agent workspace file browser with inline editor =====
+
+interface FileEntry {
+  name: string
+  exists: boolean
+  content: string
+}
+
+export function FilesTab({ agent }: { agent: Agent }) {
+  const [files, setFiles] = useState<FileEntry[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [activeFile, setActiveFile] = useState<string | null>(null)
+  const [draft, setDraft] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [workspace, setWorkspace] = useState<string | null>(null)
+
+  const loadFiles = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await fetch(`/api/agents/${agent.id}/files`)
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to load files')
+      }
+      const data = await response.json()
+      setWorkspace(data.workspace || null)
+      const entries = Object.entries(data.files || {}).map(([name, value]: [string, any]) => ({
+        name,
+        exists: Boolean(value?.exists),
+        content: String(value?.content || ''),
+      }))
+      setFiles(entries)
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadFiles() }, [agent.id])
+
+  const activeEntry = activeFile ? files.find(f => f.name === activeFile) : null
+  const baseContent = activeEntry?.content || ''
+  const isDirty = activeFile ? draft !== baseContent : false
+
+  const selectFile = (name: string) => {
+    const entry = files.find(f => f.name === name)
+    setActiveFile(name)
+    setDraft(entry?.content || '')
+  }
+
+  const handleSave = async () => {
+    if (!activeFile) return
+    setSaving(true)
+    try {
+      const response = await fetch(`/api/agents/${agent.id}/files`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file: activeFile, content: draft }),
+      })
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to save file')
+      }
+      setFiles(prev => prev.map(f =>
+        f.name === activeFile ? { ...f, exists: true, content: draft } : f
+      ))
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  if (loading && files.length === 0) {
+    return (
+      <div className="p-6 flex items-center justify-center py-8">
+        <Loader variant="inline" label="Loading files" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="p-5 space-y-4">
+      <div className="flex justify-between items-center">
+        <div>
+          <h4 className="text-lg font-medium text-foreground">Workspace Files</h4>
+          {workspace && (
+            <p className="text-xs text-muted-foreground font-mono mt-0.5">{workspace}</p>
+          )}
+        </div>
+        <Button onClick={loadFiles} size="sm" variant="secondary" disabled={loading}>
+          {loading ? '...' : 'Refresh'}
+        </Button>
+      </div>
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm">
+          {error}
+        </div>
+      )}
+
+      <div className="grid grid-cols-[200px_1fr] gap-4 min-h-[400px]">
+        {/* File list */}
+        <div className="space-y-1 border-r border-border pr-3">
+          {files.map(file => (
+            <button
+              key={file.name}
+              onClick={() => selectFile(file.name)}
+              className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
+                activeFile === file.name
+                  ? 'bg-primary/10 text-foreground border border-primary/30'
+                  : 'text-muted-foreground hover:text-foreground hover:bg-surface-1/50'
+              }`}
+            >
+              <div className="font-mono text-xs">{file.name}</div>
+              <div className="text-2xs mt-0.5">
+                {file.exists
+                  ? `${file.content.length} chars`
+                  : <span className="text-amber-400">missing</span>
+                }
+              </div>
+            </button>
+          ))}
+        </div>
+
+        {/* Editor */}
+        <div>
+          {!activeEntry ? (
+            <div className="text-muted-foreground text-sm flex items-center justify-center h-full">
+              Select a file to view or edit
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="flex justify-between items-center">
+                <div>
+                  <span className="font-mono text-sm text-foreground">{activeEntry.name}</span>
+                  {!activeEntry.exists && (
+                    <span className="ml-2 px-1.5 py-0.5 text-2xs bg-amber-500/20 text-amber-400 rounded">missing</span>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => setDraft(baseContent)}
+                    size="xs"
+                    variant="secondary"
+                    disabled={!isDirty}
+                  >
+                    Reset
+                  </Button>
+                  <Button
+                    onClick={handleSave}
+                    size="xs"
+                    disabled={saving || !isDirty}
+                  >
+                    {saving ? 'Saving...' : 'Save'}
+                  </Button>
+                </div>
+              </div>
+              <textarea
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                rows={20}
+                className="w-full bg-surface-1 text-foreground border border-border rounded-md px-3 py-2 font-mono text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 resize-y"
+                placeholder={activeEntry.exists ? '' : 'File does not exist yet. Enter content and save to create it.'}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ===== Tools Tab — Tool allow/deny list management =====
+
+export function ToolsTab({ agent }: { agent: Agent }) {
+  const agentConfig = (agent as any).config || {}
+  const tools = agentConfig.tools || {}
+  const toolAllow = Array.isArray(tools.allow) ? tools.allow : []
+  const toolDeny = Array.isArray(tools.deny) ? tools.deny : []
+  const toolAlsoAllow = Array.isArray(tools.alsoAllow) ? tools.alsoAllow : []
+  const profile = tools.profile || 'default'
+
+  const [allowList, setAllowList] = useState<string[]>(toolAllow)
+  const [denyList, setDenyList] = useState<string[]>(toolDeny)
+  const [alsoAllowList, setAlsoAllowList] = useState<string[]>(toolAlsoAllow)
+  const [newAllow, setNewAllow] = useState('')
+  const [newDeny, setNewDeny] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
+
+  const isDirty = JSON.stringify(allowList) !== JSON.stringify(toolAllow)
+    || JSON.stringify(denyList) !== JSON.stringify(toolDeny)
+    || JSON.stringify(alsoAllowList) !== JSON.stringify(toolAlsoAllow)
+
+  const handleSave = async () => {
+    setSaving(true)
+    setError(null)
+    setSuccess(false)
+    try {
+      const response = await fetch(`/api/agents/${agent.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          gateway_config: {
+            tools: {
+              ...tools,
+              allow: allowList,
+              deny: denyList,
+              alsoAllow: alsoAllowList,
+            },
+          },
+          write_to_gateway: true,
+        }),
+      })
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to save tools')
+      }
+      setSuccess(true)
+      setTimeout(() => setSuccess(false), 2000)
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const addToList = (list: string[], setList: (v: string[]) => void, value: string) => {
+    const trimmed = value.trim()
+    if (!trimmed || list.includes(trimmed)) return
+    setList([...list, trimmed])
+  }
+
+  const removeFromList = (list: string[], setList: (v: string[]) => void, index: number) => {
+    setList(list.filter((_, i) => i !== index))
+  }
+
+  return (
+    <div className="p-5 space-y-4">
+      <div className="flex justify-between items-center">
+        <div>
+          <h4 className="text-lg font-medium text-foreground">Tool Configuration</h4>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Profile: <span className="font-mono text-foreground">{profile}</span>
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          {success && <span className="text-xs text-green-400">Saved</span>}
+          <Button onClick={handleSave} size="sm" disabled={saving || !isDirty}>
+            {saving ? 'Saving...' : 'Save'}
+          </Button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* Allow list */}
+      <div className="bg-surface-1/50 rounded-lg p-4">
+        <h5 className="text-sm font-medium text-green-400 mb-2">Allow List ({allowList.length})</h5>
+        <div className="flex flex-wrap gap-1 mb-3">
+          {allowList.map((tool, i) => (
+            <span key={`${tool}-${i}`} className="px-2 py-0.5 text-xs bg-green-500/10 text-green-400 rounded border border-green-500/20 flex items-center gap-1">
+              {tool}
+              <button onClick={() => removeFromList(allowList, setAllowList, i)} className="text-green-400/60 hover:text-green-400 ml-0.5">x</button>
+            </span>
+          ))}
+          {allowList.length === 0 && <span className="text-xs text-muted-foreground">No explicit allow list (using profile defaults)</span>}
+        </div>
+        <div className="flex gap-2">
+          <input
+            value={newAllow}
+            onChange={(e) => setNewAllow(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                addToList(allowList, setAllowList, newAllow)
+                setNewAllow('')
+              }
+            }}
+            placeholder="Add tool to allow list"
+            className="flex-1 bg-surface-1 text-foreground rounded px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+          />
+          <Button onClick={() => { addToList(allowList, setAllowList, newAllow); setNewAllow('') }} variant="secondary" size="xs">
+            Add
+          </Button>
+        </div>
+      </div>
+
+      {/* Also-Allow list */}
+      <div className="bg-surface-1/50 rounded-lg p-4">
+        <h5 className="text-sm font-medium text-cyan-400 mb-2">Also Allow ({alsoAllowList.length})</h5>
+        <p className="text-2xs text-muted-foreground mb-2">Extra tools allowed on top of the profile defaults.</p>
+        <div className="flex flex-wrap gap-1 mb-3">
+          {alsoAllowList.map((tool, i) => (
+            <span key={`${tool}-${i}`} className="px-2 py-0.5 text-xs bg-cyan-500/10 text-cyan-400 rounded border border-cyan-500/20 flex items-center gap-1">
+              {tool}
+              <button onClick={() => removeFromList(alsoAllowList, setAlsoAllowList, i)} className="text-cyan-400/60 hover:text-cyan-400 ml-0.5">x</button>
+            </span>
+          ))}
+          {alsoAllowList.length === 0 && <span className="text-xs text-muted-foreground">None</span>}
+        </div>
+      </div>
+
+      {/* Deny list */}
+      <div className="bg-surface-1/50 rounded-lg p-4">
+        <h5 className="text-sm font-medium text-red-400 mb-2">Deny List ({denyList.length})</h5>
+        <div className="flex flex-wrap gap-1 mb-3">
+          {denyList.map((tool, i) => (
+            <span key={`${tool}-${i}`} className="px-2 py-0.5 text-xs bg-red-500/10 text-red-400 rounded border border-red-500/20 flex items-center gap-1">
+              {tool}
+              <button onClick={() => removeFromList(denyList, setDenyList, i)} className="text-red-400/60 hover:text-red-400 ml-0.5">x</button>
+            </span>
+          ))}
+          {denyList.length === 0 && <span className="text-xs text-muted-foreground">No denied tools</span>}
+        </div>
+        <div className="flex gap-2">
+          <input
+            value={newDeny}
+            onChange={(e) => setNewDeny(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                addToList(denyList, setDenyList, newDeny)
+                setNewDeny('')
+              }
+            }}
+            placeholder="Add tool to deny list"
+            className="flex-1 bg-surface-1 text-foreground rounded px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+          />
+          <Button onClick={() => { addToList(denyList, setDenyList, newDeny); setNewDeny('') }} variant="secondary" size="xs">
+            Add
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ===== Channels Tab — Per-agent channel assignment view =====
+
+interface ChannelAccountInfo {
+  id?: string
+  connected?: boolean
+  running?: boolean
+  configured?: boolean
+  enabled?: boolean
+  probe?: { ok?: boolean }
+}
+
+interface ChannelEntryInfo {
+  id: string
+  label: string
+  accounts: ChannelAccountInfo[]
+}
+
+export function ChannelsTab({ agent }: { agent: Agent }) {
+  const [channels, setChannels] = useState<ChannelEntryInfo[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const loadChannels = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await fetch('/api/channels')
+      if (!response.ok) throw new Error('Failed to load channels')
+      const data = await response.json()
+
+      const snapshot = data.channels || data
+      const channelOrder: string[] = snapshot.channelOrder || []
+      const channelMeta: Array<{ id: string; label?: string }> = snapshot.channelMeta || []
+      const channelAccounts: Record<string, ChannelAccountInfo[]> = snapshot.channelAccounts || {}
+      const channelLabels: Record<string, string> = snapshot.channelLabels || {}
+
+      const ids = new Set<string>()
+      for (const id of channelOrder) ids.add(id)
+      for (const entry of channelMeta) ids.add(entry.id)
+      for (const id of Object.keys(channelAccounts)) ids.add(id)
+
+      const entries: ChannelEntryInfo[] = Array.from(ids).map(id => {
+        const meta = channelMeta.find(m => m.id === id)
+        return {
+          id,
+          label: meta?.label || channelLabels[id] || id,
+          accounts: channelAccounts[id] || [],
+        }
+      })
+
+      setChannels(entries)
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadChannels() }, [])
+
+  if (loading && channels.length === 0) {
+    return (
+      <div className="p-6 flex items-center justify-center py-8">
+        <Loader variant="inline" label="Loading channels" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="p-5 space-y-4">
+      <div className="flex justify-between items-center">
+        <div>
+          <h4 className="text-lg font-medium text-foreground">Channel Status</h4>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            Gateway-wide channel status snapshot. Agent: <span className="font-mono text-foreground">{agent.name}</span>
+          </p>
+        </div>
+        <Button onClick={loadChannels} size="sm" variant="secondary" disabled={loading}>
+          {loading ? '...' : 'Refresh'}
+        </Button>
+      </div>
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm">
+          {error}
+        </div>
+      )}
+
+      {channels.length === 0 ? (
+        <div className="text-muted-foreground text-sm py-8 text-center">
+          No channels found. Load channels to see live status.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {channels.map(channel => {
+            const total = channel.accounts.length
+            const connected = channel.accounts.filter(a => {
+              const probeOk = a.probe && typeof a.probe === 'object' && 'ok' in a.probe ? Boolean(a.probe.ok) : false
+              return a.connected === true || a.running === true || probeOk
+            }).length
+            const enabled = channel.accounts.filter(a => a.enabled).length
+            const configured = channel.accounts.filter(a => a.configured).length
+
+            return (
+              <div key={channel.id} className="bg-surface-1/50 rounded-lg p-4 flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-medium text-foreground">{channel.label}</div>
+                  <div className="text-xs font-mono text-muted-foreground">{channel.id}</div>
+                </div>
+                <div className="flex gap-3 text-xs text-muted-foreground">
+                  <span>{total > 0 ? `${connected}/${total} connected` : 'no accounts'}</span>
+                  <span>{configured > 0 ? `${configured} configured` : 'not configured'}</span>
+                  <span className={enabled > 0 ? 'text-green-400' : ''}>{total > 0 ? `${enabled} enabled` : 'disabled'}</span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ===== Cron Tab — Per-agent cron jobs =====
+
+interface AgentCronJob {
+  name: string
+  description?: string
+  agentId?: string
+  schedule?: string
+  cron?: string
+  enabled?: boolean
+  lastRun?: string | number | null
+  nextRun?: string | number | null
+  sessionTarget?: string
+  state?: string
+  payload?: any
+}
+
+export function CronTab({ agent }: { agent: Agent }) {
+  const [allJobs, setAllJobs] = useState<AgentCronJob[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [showAll, setShowAll] = useState(false)
+
+  const loadCron = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const response = await fetch('/api/cron?action=list')
+      if (!response.ok) throw new Error('Failed to load cron jobs')
+      const data = await response.json()
+      setAllJobs(data.jobs || [])
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  useEffect(() => { loadCron() }, [])
+
+  const agentName = agent.name.toLowerCase().replace(/\s+/g, '-')
+  const agentJobs = showAll
+    ? allJobs
+    : allJobs.filter(j =>
+        j.agentId === agent.name
+        || j.agentId === agentName
+        || j.agentId === String(agent.id)
+      )
+
+  const formatTime = (value: string | number | null | undefined) => {
+    if (!value) return 'n/a'
+    const d = typeof value === 'number' ? new Date(value) : new Date(value)
+    return isNaN(d.getTime()) ? String(value) : d.toLocaleString()
+  }
+
+  if (loading && allJobs.length === 0) {
+    return (
+      <div className="p-6 flex items-center justify-center py-8">
+        <Loader variant="inline" label="Loading cron jobs" />
+      </div>
+    )
+  }
+
+  return (
+    <div className="p-5 space-y-4">
+      <div className="flex justify-between items-center">
+        <div>
+          <h4 className="text-lg font-medium text-foreground">Cron Jobs</h4>
+          <p className="text-xs text-muted-foreground mt-0.5">
+            {showAll ? 'All' : 'Agent'} cron jobs ({agentJobs.length} of {allJobs.length} total)
+          </p>
+        </div>
+        <div className="flex gap-2">
+          <Button
+            onClick={() => setShowAll(!showAll)}
+            size="xs"
+            variant={showAll ? 'outline' : 'secondary'}
+          >
+            {showAll ? 'Agent Only' : 'Show All'}
+          </Button>
+          <Button onClick={loadCron} size="sm" variant="secondary" disabled={loading}>
+            {loading ? '...' : 'Refresh'}
+          </Button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm">
+          {error}
+        </div>
+      )}
+
+      {agentJobs.length === 0 ? (
+        <div className="text-muted-foreground text-sm py-8 text-center">
+          No cron jobs {showAll ? 'found' : `assigned to ${agent.name}`}.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {agentJobs.map(job => (
+            <div key={job.name} className="bg-surface-1/50 rounded-lg p-4">
+              <div className="flex items-start justify-between">
+                <div>
+                  <div className="text-sm font-medium text-foreground">{job.name}</div>
+                  {job.description && (
+                    <div className="text-xs text-muted-foreground mt-0.5">{job.description}</div>
+                  )}
+                  <div className="flex gap-2 mt-2">
+                    <span className="px-2 py-0.5 text-xs bg-surface-2 rounded font-mono">
+                      {job.schedule || job.cron || 'no schedule'}
+                    </span>
+                    <span className={`px-2 py-0.5 text-xs rounded ${
+                      job.enabled ? 'bg-green-500/20 text-green-400' : 'bg-amber-500/20 text-amber-400'
+                    }`}>
+                      {job.enabled ? 'enabled' : 'disabled'}
+                    </span>
+                    {job.sessionTarget && (
+                      <span className="px-2 py-0.5 text-xs bg-surface-2 rounded text-muted-foreground">
+                        {job.sessionTarget}
+                      </span>
+                    )}
+                    {job.agentId && (
+                      <span className="px-2 py-0.5 text-xs bg-violet-500/10 text-violet-400 rounded">
+                        {job.agentId}
+                      </span>
+                    )}
+                  </div>
+                </div>
+                <div className="text-right text-xs text-muted-foreground space-y-1">
+                  <div>Last: {formatTime(job.lastRun)}</div>
+                  <div>Next: {formatTime(job.nextRun)}</div>
+                  {job.state && <div className="font-mono">{job.state}</div>}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ===== Models Tab — Model fallback chain =====
+
+export function ModelsTab({ agent }: { agent: Agent }) {
+  const agentConfig = (agent as any).config || {}
+  const modelCfg = agentConfig.model || {}
+  const modelPrimary = typeof modelCfg === 'string' ? modelCfg : (modelCfg.primary || '')
+  const modelFallbacks: string[] = Array.isArray(modelCfg.fallbacks) ? modelCfg.fallbacks : []
+
+  const [primary, setPrimary] = useState(modelPrimary)
+  const [fallbacks, setFallbacks] = useState<string[]>(modelFallbacks)
+  const [newFallback, setNewFallback] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [success, setSuccess] = useState(false)
+  const [availableModels, setAvailableModels] = useState<Array<{ alias: string }>>([])
+
+  useEffect(() => {
+    fetch('/api/status?action=models')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data?.models) setAvailableModels(data.models)
+      })
+      .catch(() => {})
+  }, [])
+
+  const isDirty = primary !== modelPrimary || JSON.stringify(fallbacks) !== JSON.stringify(modelFallbacks)
+
+  const handleSave = async () => {
+    setSaving(true)
+    setError(null)
+    setSuccess(false)
+    try {
+      const response = await fetch(`/api/agents/${agent.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          gateway_config: {
+            model: {
+              primary: primary.trim(),
+              fallbacks: fallbacks.filter(f => f.trim()),
+            },
+          },
+          write_to_gateway: true,
+        }),
+      })
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.error || 'Failed to save model config')
+      }
+      setSuccess(true)
+      setTimeout(() => setSuccess(false), 2000)
+    } catch (err: any) {
+      setError(err.message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const addFallback = () => {
+    const trimmed = newFallback.trim()
+    if (!trimmed || fallbacks.includes(trimmed)) return
+    setFallbacks([...fallbacks, trimmed])
+    setNewFallback('')
+  }
+
+  const removeFallback = (index: number) => {
+    setFallbacks(fallbacks.filter((_, i) => i !== index))
+  }
+
+  const moveFallback = (index: number, direction: -1 | 1) => {
+    const newIndex = index + direction
+    if (newIndex < 0 || newIndex >= fallbacks.length) return
+    const next = [...fallbacks]
+    const [item] = next.splice(index, 1)
+    next.splice(newIndex, 0, item)
+    setFallbacks(next)
+  }
+
+  return (
+    <div className="p-5 space-y-4">
+      <div className="flex justify-between items-center">
+        <div>
+          <h4 className="text-lg font-medium text-foreground">Model Configuration</h4>
+          <p className="text-xs text-muted-foreground mt-0.5">Primary model and fallback chain.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          {success && <span className="text-xs text-green-400">Saved</span>}
+          <Button onClick={handleSave} size="sm" disabled={saving || !isDirty}>
+            {saving ? 'Saving...' : 'Save'}
+          </Button>
+        </div>
+      </div>
+
+      {error && (
+        <div className="bg-red-500/10 border border-red-500/20 text-red-400 p-3 rounded-lg text-sm">
+          {error}
+        </div>
+      )}
+
+      {/* Primary model */}
+      <div className="bg-surface-1/50 rounded-lg p-4">
+        <h5 className="text-sm font-medium text-foreground mb-2">Primary Model</h5>
+        <select
+          value={primary}
+          onChange={(e) => setPrimary(e.target.value)}
+          className="w-full bg-surface-1 text-foreground border border-border rounded-md px-3 py-2 text-sm font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+        >
+          <option value="">Default</option>
+          {availableModels.map(m => (
+            <option key={m.alias} value={m.alias}>{m.alias}</option>
+          ))}
+          {primary && !availableModels.find(m => m.alias === primary) && (
+            <option value={primary}>{primary}</option>
+          )}
+        </select>
+      </div>
+
+      {/* Fallback chain */}
+      <div className="bg-surface-1/50 rounded-lg p-4">
+        <h5 className="text-sm font-medium text-foreground mb-2">Fallback Chain ({fallbacks.length})</h5>
+        <p className="text-2xs text-muted-foreground mb-3">
+          Models are tried in order when the primary is unavailable.
+        </p>
+
+        {fallbacks.length === 0 ? (
+          <div className="text-xs text-muted-foreground mb-3">No fallback models configured.</div>
+        ) : (
+          <div className="space-y-1 mb-3">
+            {fallbacks.map((fb, i) => (
+              <div key={`${fb}-${i}`} className="flex items-center gap-2 bg-surface-1 rounded px-3 py-1.5">
+                <span className="text-xs text-muted-foreground w-5">{i + 1}.</span>
+                <span className="flex-1 font-mono text-xs text-foreground">{fb}</span>
+                <button
+                  onClick={() => moveFallback(i, -1)}
+                  disabled={i === 0}
+                  className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 px-1"
+                  title="Move up"
+                >
+                  ^
+                </button>
+                <button
+                  onClick={() => moveFallback(i, 1)}
+                  disabled={i === fallbacks.length - 1}
+                  className="text-xs text-muted-foreground hover:text-foreground disabled:opacity-30 px-1"
+                  title="Move down"
+                >
+                  v
+                </button>
+                <button
+                  onClick={() => removeFallback(i)}
+                  className="text-xs text-red-400/60 hover:text-red-400 px-1"
+                  title="Remove"
+                >
+                  x
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex gap-2">
+          <input
+            value={newFallback}
+            onChange={(e) => setNewFallback(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                addFallback()
+              }
+            }}
+            list="model-fallback-suggestions"
+            placeholder="Add fallback model"
+            className="flex-1 bg-surface-1 text-foreground rounded px-3 py-1.5 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary/50"
+          />
+          <datalist id="model-fallback-suggestions">
+            {availableModels.map(m => (
+              <option key={m.alias} value={m.alias} />
+            ))}
+          </datalist>
+          <Button onClick={addFallback} variant="secondary" size="xs">
+            Add
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}

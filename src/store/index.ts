@@ -18,6 +18,7 @@ export interface Session {
   lastActivity?: number
   messageCount?: number
   cost?: number
+  label?: string
 }
 
 export interface LogEntry {
@@ -76,6 +77,8 @@ export interface TokenUsage {
   outputTokens: number
   totalTokens: number
   cost: number
+  cacheReadTokens?: number
+  cacheWriteTokens?: number
 }
 
 export interface ModelConfig {
@@ -198,6 +201,13 @@ export interface Comment {
   replies?: Comment[]
 }
 
+export interface ChatAttachment {
+  name: string
+  type: string
+  size: number
+  dataUrl: string
+}
+
 export interface ChatMessage {
   id: number
   conversation_id: string
@@ -206,6 +216,7 @@ export interface ChatMessage {
   content: string
   message_type: 'text' | 'system' | 'handoff' | 'status' | 'command' | 'tool_call'
   metadata?: any
+  attachments?: ChatAttachment[]
   read_at?: number
   created_at: number
   pendingStatus?: 'sending' | 'sent' | 'failed'

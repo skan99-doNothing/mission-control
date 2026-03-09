@@ -12,6 +12,11 @@ import {
 } from '@/lib/device-identity'
 import { APP_VERSION } from '@/lib/version'
 import { createClientLogger } from '@/lib/client-logger'
+import {
+  ConnectErrorDetailCodes,
+  readErrorDetailCode,
+  NON_RETRYABLE_ERROR_CODES,
+} from '@/lib/websocket-utils'
 
 const log = createClientLogger('WebSocket')
 
@@ -33,8 +38,9 @@ interface GatewayFrame {
   payload?: any
   ok?: boolean
   result?: any
-  error?: any
+  error?: { message?: string; code?: string; details?: any; [key: string]: any }
   params?: any
+  seq?: number
 }
 
 interface GatewayMessage {
@@ -60,6 +66,7 @@ const pingCounterRef: { current: number } = { current: 0 }
 const pingSentTimestamps: { current: Map<string, number> } = { current: new Map() }
 const missedPongsRef: { current: number } = { current: 0 }
 const gatewaySupportsPingRef: { current: boolean } = { current: true }
+const lastSeqRef: { current: number | null } = { current: null }
 
 export function useWebSocket() {
   const maxReconnectAttempts = 10
@@ -80,7 +87,12 @@ export function useWebSocket() {
     updateExecApproval,
   } = useMissionControl()
 
-  const isNonRetryableGatewayError = useCallback((message: string): boolean => {
+  const isNonRetryableGatewayError = useCallback((message: string, error?: GatewayFrame['error']): boolean => {
+    // Prefer structured error code when available (newer gateways)
+    const code = readErrorDetailCode(error)
+    if (code && NON_RETRYABLE_ERROR_CODES.has(code)) return true
+
+    // Fallback: string matching for older gateways without structured codes
     const normalized = message.toLowerCase()
     return (
       normalized.includes('origin not allowed') ||
@@ -261,6 +273,7 @@ export function useWebSocket() {
         },
         role,
         scopes,
+        caps: ['tool-events'],
         auth: authToken ? { token: authToken } : undefined,
         device,
         deviceToken: cachedToken || undefined,
@@ -398,7 +411,7 @@ export function useWebSocket() {
       log.error(`Gateway error: ${frame.error?.message || JSON.stringify(frame.error)}`)
       const rawMessage = frame.error?.message || JSON.stringify(frame.error)
       const help = getGatewayErrorHelp(rawMessage)
-      const nonRetryable = isNonRetryableGatewayError(rawMessage)
+      const nonRetryable = isNonRetryableGatewayError(rawMessage, frame.error)
 
       addLog({
         id: nonRetryable ? `gateway-handshake-${rawMessage}` : `error-${Date.now()}`,
@@ -430,6 +443,14 @@ export function useWebSocket() {
 
     // Handle broadcast events (tick, log, chat, notification, agent status, etc.)
     if (frame.type === 'event') {
+      // Track event sequence numbers to detect gaps (missed events)
+      const seq = typeof frame.seq === 'number' ? frame.seq : null
+      if (seq !== null) {
+        if (lastSeqRef.current !== null && seq > lastSeqRef.current + 1) {
+          log.warn(`Event sequence gap: expected ${lastSeqRef.current + 1}, received ${seq}`)
+        }
+        lastSeqRef.current = seq
+      }
       if (frame.event === 'tick') {
         // Tick event contains snapshot data
         const snapshot = frame.payload?.snapshot
@@ -642,6 +663,7 @@ export function useWebSocket() {
     handshakeCompleteRef.current = false
     manualDisconnectRef.current = false
     nonRetryableErrorRef.current = null
+    lastSeqRef.current = null
 
     try {
       const ws = new WebSocket(normalizedUrl)
@@ -691,7 +713,7 @@ export function useWebSocket() {
         // Auto-reconnect with exponential backoff (uses connectRef to avoid stale closure)
         const attempts = reconnectAttemptsRef.current
         if (attempts < maxReconnectAttempts) {
-          const base = Math.min(Math.pow(2, attempts) * 1000, 30000)
+          const base = Math.min(1000 * Math.pow(1.7, attempts), 15000)
           const timeout = Math.round(base + Math.random() * base * 0.5)
           log.info(`Reconnecting in ${timeout}ms (attempt ${attempts + 1}/${maxReconnectAttempts})`)
 

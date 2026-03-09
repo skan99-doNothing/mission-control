@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useState, useCallback } from 'react'
 import { useMissionControl, ChatMessage } from '@/store'
 import { MessageBubble } from './message-bubble'
 import { Button } from '@/components/ui/button'
@@ -50,22 +50,48 @@ export function MessageList() {
   const { chatMessages, activeConversation, isSendingMessage, updatePendingMessage, removePendingMessage, addChatMessage } = useMissionControl()
   const bottomRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
+  const [showNewMessages, setShowNewMessages] = useState(false)
+  const prevMessageCountRef = useRef(0)
 
-  // Auto-scroll to bottom on new messages
-  useEffect(() => {
+  const isNearBottom = useCallback(() => {
     const container = containerRef.current
-    if (!container) return
+    if (!container) return true
+    return container.scrollHeight - container.scrollTop - container.clientHeight < 120
+  }, [])
 
-    const isNearBottom = container.scrollHeight - container.scrollTop - container.clientHeight < 120
-    if (isNearBottom) {
-      bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+  // Auto-scroll to bottom on new messages (only if near bottom)
+  useEffect(() => {
+    const conversationMessages = chatMessages.filter(m => m.conversation_id === activeConversation)
+    const newCount = conversationMessages.length
+
+    if (newCount > prevMessageCountRef.current) {
+      if (isNearBottom()) {
+        bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+      } else {
+        setShowNewMessages(true)
+      }
     }
-  }, [chatMessages])
+    prevMessageCountRef.current = newCount
+  }, [chatMessages, activeConversation, isNearBottom])
 
   // Scroll to bottom on conversation change
   useEffect(() => {
     bottomRef.current?.scrollIntoView()
+    setShowNewMessages(false)
+    prevMessageCountRef.current = 0
   }, [activeConversation])
+
+  // Track scroll position to hide "new messages" indicator
+  const handleScroll = useCallback(() => {
+    if (isNearBottom()) {
+      setShowNewMessages(false)
+    }
+  }, [isNearBottom])
+
+  const scrollToBottom = useCallback(() => {
+    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    setShowNewMessages(false)
+  }, [])
 
   // Retry a failed message
   const handleRetry = async (msg: ChatMessage) => {
@@ -141,7 +167,7 @@ export function MessageList() {
   const groups = groupMessagesByDate(conversationMessages)
 
   return (
-    <div ref={containerRef} className="flex-1 overflow-y-auto px-4 py-3">
+    <div ref={containerRef} className="relative flex-1 overflow-y-auto px-4 py-3" onScroll={handleScroll}>
       {groups.map((group) => (
         <div key={group.date}>
           {/* Date separator */}
@@ -215,6 +241,19 @@ export function MessageList() {
       )}
 
       <div ref={bottomRef} />
+
+      {/* New messages indicator */}
+      {showNewMessages && (
+        <button
+          onClick={scrollToBottom}
+          className="sticky bottom-3 left-1/2 -translate-x-1/2 z-10 bg-primary text-primary-foreground px-4 py-1.5 rounded-full text-xs font-medium shadow-lg hover:bg-primary/90 transition-colors flex items-center gap-1.5"
+        >
+          New messages
+          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M8 3v10M4 9l4 4 4-4" />
+          </svg>
+        </button>
+      )}
     </div>
   )
 }
