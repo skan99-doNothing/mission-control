@@ -261,6 +261,15 @@ export function MemoryGraph() {
     return { graphNodes: nodes, graphEdges: edges }
   }, [agents, selectedAgent, searchQuery])
 
+  // Auto-fit the graph after layout settles (nodes change)
+  useEffect(() => {
+    if (!graphNodes.length) return
+    // reagraph force layout needs time to settle before fitNodesInView works
+    const t1 = setTimeout(() => graphRef.current?.fitNodesInView(), 800)
+    const t2 = setTimeout(() => graphRef.current?.fitNodesInView(), 2000)
+    return () => { clearTimeout(t1); clearTimeout(t2) }
+  }, [graphNodes.length, selectedAgent])
+
   // Navigation helpers
   const goBack = useCallback(() => {
     setSelectedAgent('all')
