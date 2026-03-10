@@ -67,12 +67,10 @@ function isLocalHost(hostname: string): boolean {
   return hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1'
 }
 
-const ONBOARDING_SESSION_KEY = 'mc-onboarding-session-seen'
-
 export default function Home() {
   const router = useRouter()
   const { connect } = useWebSocket()
-  const { activeTab, setActiveTab, setCurrentUser, setDashboardMode, setGatewayAvailable, setCapabilitiesChecked, setSubscription, setDefaultOrgName, setUpdateAvailable, setOpenclawUpdate, setShowOnboarding, liveFeedOpen, toggleLiveFeed, showProjectManagerModal, setShowProjectManagerModal, fetchProjects, setChatPanelOpen, bootComplete, setBootComplete, setAgents, setSessions, setProjects, setInterfaceMode, setMemoryGraphAgents, setSkillsData } = useMissionControl()
+  const { activeTab, setActiveTab, setCurrentUser, setDashboardMode, setGatewayAvailable, setCapabilitiesChecked, setSubscription, setDefaultOrgName, setUpdateAvailable, setOpenclawUpdate, showOnboarding, setShowOnboarding, liveFeedOpen, toggleLiveFeed, showProjectManagerModal, setShowProjectManagerModal, fetchProjects, setChatPanelOpen, bootComplete, setBootComplete, setAgents, setSessions, setProjects, setInterfaceMode, setMemoryGraphAgents, setSkillsData } = useMissionControl()
 
   // Sync URL → Zustand activeTab
   const pathname = usePathname()
@@ -279,24 +277,7 @@ export default function Home() {
     fetch('/api/onboarding')
       .then(res => res.ok ? res.json() : null)
       .then(data => {
-        let shouldOpenOnboarding = Boolean(data?.showOnboarding)
-
-        if (typeof window !== 'undefined' && data?.isAdmin === true) {
-          try {
-            const seenThisSession = sessionStorage.getItem(ONBOARDING_SESSION_KEY) === '1'
-            if (!seenThisSession && !shouldOpenOnboarding) {
-              // Replay walkthrough once per fresh browser session (including incognito sessions).
-              shouldOpenOnboarding = true
-            }
-            if (!seenThisSession) {
-              sessionStorage.setItem(ONBOARDING_SESSION_KEY, '1')
-            }
-          } catch {
-            // Ignore storage access issues and fall back to server onboarding state only.
-          }
-        }
-
-        if (shouldOpenOnboarding) {
+        if (data?.showOnboarding) {
           setShowOnboarding(true)
         }
         markStep('config')
@@ -331,18 +312,25 @@ export default function Home() {
         Skip to main content
       </a>
 
-      <OnboardingWizard />
-
       {/* Left: Icon rail navigation (hidden on mobile, shown as bottom bar instead) */}
-      <NavRail />
+      {!showOnboarding && <NavRail />}
 
       {/* Center: Header + Content */}
       <div className="flex-1 flex flex-col min-w-0">
-        <HeaderBar />
-        <LocalModeBanner />
-        <UpdateBanner />
-        <OpenClawUpdateBanner />
-        <main id="main-content" className="flex-1 overflow-auto pb-16 md:pb-0" role="main">
+        {!showOnboarding && (
+          <>
+            <HeaderBar />
+            <LocalModeBanner />
+            <UpdateBanner />
+            <OpenClawUpdateBanner />
+          </>
+        )}
+        <main
+          id="main-content"
+          className={`flex-1 overflow-auto pb-16 md:pb-0 ${showOnboarding ? 'pointer-events-none select-none blur-[2px] opacity-30' : ''}`}
+          role="main"
+          aria-hidden={showOnboarding}
+        >
           <div aria-live="polite" className="flex flex-col min-h-full">
             <ErrorBoundary key={activeTab}>
               <ContentRouter tab={activeTab} />
@@ -357,14 +345,14 @@ export default function Home() {
       </div>
 
       {/* Right: Live feed (hidden on mobile) */}
-      {liveFeedOpen && (
+      {!showOnboarding && liveFeedOpen && (
         <div className="hidden lg:flex h-full">
           <LiveFeed />
         </div>
       )}
 
       {/* Floating button to reopen LiveFeed when closed */}
-      {!liveFeedOpen && (
+      {!showOnboarding && !liveFeedOpen && (
         <button
           onClick={toggleLiveFeed}
           className="hidden lg:flex fixed right-0 top-1/2 -translate-y-1/2 z-30 w-6 h-12 items-center justify-center bg-card border border-r-0 border-border rounded-l-md text-muted-foreground hover:text-foreground hover:bg-secondary transition-all duration-200"
@@ -377,18 +365,20 @@ export default function Home() {
       )}
 
       {/* Chat panel overlay */}
-      <ChatPanel />
+      {!showOnboarding && <ChatPanel />}
 
       {/* Global exec approval overlay (shown regardless of active panel) */}
-      <ExecApprovalOverlay />
+      {!showOnboarding && <ExecApprovalOverlay />}
 
       {/* Global Project Manager Modal */}
-      {showProjectManagerModal && (
+      {!showOnboarding && showProjectManagerModal && (
         <ProjectManagerModal
           onClose={() => setShowProjectManagerModal(false)}
           onChanged={async () => { await fetchProjects() }}
         />
       )}
+
+      <OnboardingWizard />
     </div>
   )
 }

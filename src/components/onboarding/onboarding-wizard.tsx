@@ -1,6 +1,7 @@
 'use client'
 
 import Image from 'next/image'
+import { createPortal } from 'react-dom'
 import { useState, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Loader } from '@/components/ui/loader'
@@ -65,9 +66,17 @@ export function OnboardingWizard() {
     hasSkills: false,
     dashboardRegistration: null,
   })
+  const [mounted, setMounted] = useState(false)
+
+  useEffect(() => {
+    setMounted(true)
+  }, [])
 
   useEffect(() => {
     if (!showOnboarding) return
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+
     fetch('/api/onboarding')
       .then(r => r.ok ? r.json() : null)
       .then(data => {
@@ -96,6 +105,10 @@ export function OnboardingWizard() {
         dashboardRegistration: statusData?.dashboardRegistration ?? null,
       })
     })
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+    }
   }, [showOnboarding])
 
   const STEPS = getWizardSteps(capabilities.gatewayConnected)
@@ -178,37 +191,30 @@ export function OnboardingWizard() {
       if (event.key === 'Escape') {
         event.preventDefault()
         skip()
-        return
-      }
-
-      if (event.key === 'ArrowLeft' && step > 0) {
-        event.preventDefault()
-        goBack()
-        return
-      }
-
-      if ((event.key === 'ArrowRight' || event.key === 'Enter') && step < STEPS.length - 1) {
-        event.preventDefault()
-        goNext()
       }
     }
 
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [showOnboarding, skip, goBack, goNext, step, STEPS.length])
+  }, [showOnboarding, skip])
 
-  if (!showOnboarding || !state) return null
+  if (!mounted || !showOnboarding || !state) return null
 
   const totalSteps = STEPS.length
   const isGateway = dashboardMode === 'full' || gatewayAvailable
 
-  return (
-    <div className={`fixed inset-0 z-50 flex items-center justify-center transition-opacity duration-300 ${closing ? 'opacity-0' : 'opacity-100'}`}>
+  return createPortal(
+    <div className={`fixed inset-0 z-[140] flex items-center justify-center transition-opacity duration-300 ${closing ? 'opacity-0' : 'opacity-100'}`}>
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={skip} />
+      <div className="absolute inset-0 bg-black/82 backdrop-blur-md" onClick={skip} />
 
       {/* Modal */}
-      <div className="relative w-full max-w-lg mx-4 bg-background border border-border/50 rounded-xl shadow-2xl overflow-hidden">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Mission Control onboarding"
+        className="relative z-10 w-full max-w-lg mx-4 bg-background border border-border/50 rounded-xl shadow-2xl overflow-hidden"
+      >
         {/* Progress bar */}
         <div className="h-0.5 bg-surface-2">
           <div
@@ -262,7 +268,8 @@ export function OnboardingWizard() {
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
 

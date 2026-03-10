@@ -15,6 +15,37 @@ interface LoaderProps {
   steps?: InitStep[]
 }
 
+const LOADER_AGENTS = [
+  {
+    key: 'claude',
+    name: 'Claude',
+    src: '/brand/claude-logo.png',
+    wrapperClass: 'absolute left-1/2 top-0 -translate-x-1/2 opacity-0 animate-converge-top',
+    labelClass: 'absolute left-1/2 -top-5 -translate-x-1/2',
+  },
+  {
+    key: 'openclaw',
+    name: 'OpenClaw',
+    src: '/brand/openclaw-logo.png',
+    wrapperClass: 'absolute left-0 top-1/2 -translate-y-1/2 opacity-0 animate-converge-left',
+    labelClass: 'absolute -left-9 top-1/2 -translate-y-1/2',
+  },
+  {
+    key: 'codex',
+    name: 'Codex',
+    src: '/brand/codex-logo.png',
+    wrapperClass: 'absolute right-0 top-1/2 -translate-y-1/2 opacity-0 animate-converge-right',
+    labelClass: 'absolute -right-7 top-1/2 -translate-y-1/2',
+  },
+  {
+    key: 'hermes',
+    name: 'Hermes',
+    src: '/brand/hermes-logo.png',
+    wrapperClass: 'absolute left-1/2 bottom-0 -translate-x-1/2 opacity-0 animate-converge-bottom',
+    labelClass: 'absolute left-1/2 -bottom-5 -translate-x-1/2',
+  },
+] as const
+
 function LoaderDots({ size = 'md' }: { size?: 'sm' | 'md' }) {
   const dotSize = size === 'sm' ? 'w-1 h-1' : 'w-1.5 h-1.5'
   return (
@@ -49,46 +80,23 @@ function PageLoader({ steps }: { steps?: InitStep[] }) {
           {/* Phase 1: Four logos converge from cardinal directions (fades out at 1.8s) */}
           <div className="absolute inset-0 flex items-center justify-center animate-pair-fade-out">
             <div className="relative w-28 h-28">
-              {/* Top: Claude */}
-              <div className="absolute left-1/2 top-0 -translate-x-1/2 opacity-0 animate-converge-top">
-                <Image
-                  src="/brand/claude-logo.png"
-                  alt="Claude"
-                  width={36}
-                  height={36}
-                  className="w-9 h-9 rounded-lg"
-                />
-              </div>
-              {/* Left: OpenClaw */}
-              <div className="absolute left-0 top-1/2 -translate-y-1/2 opacity-0 animate-converge-left">
-                <Image
-                  src="/brand/openclaw-logo.png"
-                  alt="OpenClaw"
-                  width={36}
-                  height={36}
-                  className="w-9 h-9 rounded-lg"
-                />
-              </div>
-              {/* Right: Codex */}
-              <div className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 animate-converge-right">
-                <Image
-                  src="/brand/codex-logo.png"
-                  alt="Codex"
-                  width={36}
-                  height={36}
-                  className="w-9 h-9 rounded-lg"
-                />
-              </div>
-              {/* Bottom: Hermes */}
-              <div className="absolute left-1/2 bottom-0 -translate-x-1/2 opacity-0 animate-converge-bottom">
-                <Image
-                  src="/brand/hermes-logo.png"
-                  alt="Hermes"
-                  width={36}
-                  height={36}
-                  className="w-9 h-9 rounded-lg"
-                />
-              </div>
+              {LOADER_AGENTS.map((agent) => (
+                <div key={agent.key} className={agent.wrapperClass}>
+                  <div className="relative">
+                    <Image
+                      src={agent.src}
+                      alt={agent.name}
+                      width={36}
+                      height={36}
+                      priority
+                      className="w-9 h-9 rounded-lg border border-border/60 bg-card/90 shadow-[0_0_24px_rgba(14,165,233,0.12)]"
+                    />
+                    <span className={`${agent.labelClass} rounded-full border border-border/50 bg-background/85 px-1.5 py-0.5 text-[9px] font-mono uppercase tracking-[0.18em] text-muted-foreground shadow-sm`}>
+                      {agent.name}
+                    </span>
+                  </div>
+                </div>
+              ))}
               {/* Center burst */}
               <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-1 h-1 rounded-full bg-primary opacity-0 animate-converge-burst" />
             </div>
